@@ -4,16 +4,38 @@ A local tool for bulk-reviewing and retagging your Google Maps saved lists.
 
 Because Google Maps has no public API for personal saved data, the tool drives a real browser via Playwright. All data stays on your machine — nothing is sent to any external service.
 
-## Requirements
+## Download (no dev environment needed)
+
+Pre-built binaries for every platform are attached to each [GitHub Release](../../releases). Download the one for your OS, make it executable, and run it:
+
+```bash
+# macOS (Apple Silicon)
+chmod +x gmaps-retag-macos-arm64 && ./gmaps-retag-macos-arm64
+
+# macOS (Intel)
+chmod +x gmaps-retag-macos-x64 && ./gmaps-retag-macos-x64
+
+# Linux x64
+chmod +x gmaps-retag-linux-x64 && ./gmaps-retag-linux-x64
+
+# Windows — double-click gmaps-retag-win-x64.exe or run from a terminal
+```
+
+On first launch the tool detects that Chromium isn't installed and downloads it automatically (~150 MB, cached permanently at `~/.cache/ms-playwright`). Subsequent runs start instantly.
+
+---
+
+## Development setup
+
+### Requirements
 
 - [Bun](https://bun.sh) ≥ 1.3 (version pinned in `.bun-version`)
-- Chromium (installed automatically by Playwright on first run)
+- Chromium (downloaded automatically on first run, or manually with `bunx playwright install chromium`)
 
-## Setup
+### Install
 
 ```bash
 bun install
-bunx playwright install chromium
 ```
 
 ## Usage
@@ -50,6 +72,22 @@ Everything is written to `output/` (git-ignored except `.gitkeep`):
 | `{list}_{ts}.json` | Raw collected places — name and Maps link |
 | `{list}_{ts}_actions.json` | User-confirmed actions consumed by the Update flow |
 | `errors_{ts}.json` | Per-item failures from either flow |
+
+## Releasing
+
+Push a semver tag to trigger the GitHub Actions release workflow, which cross-compiles all five platform binaries from a single Ubuntu runner and attaches them to the release automatically:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+To build binaries locally:
+
+```bash
+bun run build        # current platform only → dist/gmaps-retag
+bun run build:all    # all five platforms    → dist/
+```
 
 ---
 

@@ -4,15 +4,31 @@ import { getState, setState, addSSEClient, removeSSEClient } from './state.ts';
 import { getBrowserContext, closeBrowser } from './playwright/browser.ts';
 import { collectList } from './playwright/collect.ts';
 import { performUpdates } from './playwright/update.ts';
+import { ensureBrowser } from './setup.ts';
 import type { PlaceAction, ActionFile } from './types.ts';
 
-const PUBLIC_DIR = join(import.meta.dir, '..', 'public');
+// Imported as embedded text so the binary is fully self-contained when compiled.
+// bun-types incorrectly types `with { type:'text' }` imports as HTMLBundle; cast to string.
+// @ts-ignore
+import _indexHtml from '../public/index.html' with { type: 'text' };
+// @ts-ignore
+import _collectHtml from '../public/collect.html' with { type: 'text' };
+// @ts-ignore
+import _updateHtml from '../public/update.html' with { type: 'text' };
+const indexHtml = _indexHtml as unknown as string;
+const collectHtml = _collectHtml as unknown as string;
+const updateHtml = _updateHtml as unknown as string;
+
 const OUTPUT_DIR = join(process.cwd(), 'output');
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
+await ensureBrowser();
 
-function html(path: string): Response {
-  return new Response(Bun.file(join(PUBLIC_DIR, path)), {
+// In a compiled binary process.argv[1] is empty; use that to detect runtime mode.
+const isCompiledBinary = !process.argv[1]?.endsWith('.ts');
+
+function html(content: string): Response {
+  return new Response(content, {
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
   });
 }
@@ -59,9 +75,9 @@ const server = Bun.serve({
     const method = req.method;
 
     // ── Static pages ─────────────────────────────────────────────────────────
-    if (pathname === '/' || pathname === '/index.html') return html('index.html');
-    if (pathname === '/collect') return html('collect.html');
-    if (pathname === '/update') return html('update.html');
+    if (pathname === '/' || pathname === '/index.html') return html(indexHtml);
+    if (pathname === '/collect') return html(collectHtml);
+    if (pathname === '/update') return html(updateHtml);
 
     // ── SSE stream ───────────────────────────────────────────────────────────
     if (pathname === '/api/events') return makeSSEResponse();
@@ -198,4 +214,14 @@ const server = Bun.serve({
   },
 });
 
-console.log(`\n  gmaps-retag running → http://localhost:${server.port}\n`);
+const url = `http://localhost:${server.port}`;
+console.log(`\n  gmaps-retag running → ${url}\n`);
+
+if (isCompiledBinary) {
+  // Auto-open the UI in the default browser when running as a standalone binary.
+  const openCmd =
+    process.platform === 'darwin' ? ['open', url] :
+    process.platform === 'win32'  ? ['cmd', '/c', 'start', url] :
+                                    ['xdg-open', url];
+  Bun.spawn(openCmd, { stdout: null, stderr: null });
+}

@@ -6,7 +6,9 @@
     "start": "bun run src/server.ts",
     "start:dry": "DRY_RUN=true bun run src/server.ts",
     "dev": "bun --watch run src/server.ts",
-    "dev:dry": "DRY_RUN=true bun --watch run src/server.ts"
+    "dev:dry": "DRY_RUN=true bun --watch run src/server.ts",
+    "build": "bun build --compile --external chromium-bidi --external electron src/server.ts --outfile dist/gmaps-retag",
+    "build:all": "mkdir -p dist && bun build --compile --external chromium-bidi --external electron --target=bun-linux-x64 src/server.ts --outfile dist/gmaps-retag-linux-x64 && bun build --compile --external chromium-bidi --external electron --target=bun-linux-arm64 src/server.ts --outfile dist/gmaps-retag-linux-arm64 && bun build --compile --external chromium-bidi --external electron --target=bun-darwin-x64 src/server.ts --outfile dist/gmaps-retag-macos-x64 && bun build --compile --external chromium-bidi --external electron --target=bun-darwin-arm64 src/server.ts --outfile dist/gmaps-retag-macos-arm64 && bun build --compile --external chromium-bidi --external electron --target=bun-windows-x64 src/server.ts --outfile dist/gmaps-retag-win-x64.exe"
   },
   "dependencies": {
     "playwright": "^1.50.0"

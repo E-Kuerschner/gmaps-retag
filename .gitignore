@@ -1,6 +1,7 @@
 # Project-specific
 browser-data/
 output/*.json
+dist/
 
 # Logs
 logs
