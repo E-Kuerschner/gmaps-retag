@@ -18,6 +18,11 @@
 </head>
 <body class="min-h-screen bg-gray-50">
 
+  <!-- Dry-run banner -->
+  <div id="dry-run-banner" class="hidden bg-amber-400 text-amber-900 text-sm font-medium text-center py-2 px-4">
+    DRY RUN MODE — no changes will be made to your saved lists during the Update step
+  </div>
+
   <header class="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4">
     <a href="/" class="text-gray-400 hover:text-gray-700 transition-colors">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -165,6 +170,7 @@
 
     function applyState(state) {
       appState = state;
+      document.getElementById('dry-run-banner').classList.toggle('hidden', !state.dryRun);
       const sectionId = sections[state.phase] || 'phase-input';
       showOnly(sectionId);
 

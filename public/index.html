@@ -7,7 +7,12 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-gray-50 flex items-center justify-center">
-  <div class="max-w-lg w-full mx-auto px-6">
+  <!-- Dry-run banner — shown automatically when server starts with DRY_RUN=true -->
+  <div id="dry-run-banner" class="hidden fixed top-0 inset-x-0 z-50 bg-amber-400 text-amber-900 text-sm font-medium text-center py-2 px-4">
+    DRY RUN MODE — the Update flow will navigate and validate selectors but will not modify any saved lists
+  </div>
+
+  <div class="max-w-lg w-full mx-auto px-6" id="main-content">
     <div class="text-center mb-10">
       <h1 class="text-3xl font-bold text-gray-900 mb-2">gmaps-retag</h1>
       <p class="text-gray-500">Manage your Google Maps saved lists</p>
@@ -58,5 +63,18 @@
       Make sure you are signed into Google Maps in that window.
     </p>
   </div>
+
+  <script>
+    const es = new EventSource('/api/events');
+    es.addEventListener('state', e => {
+      const state = JSON.parse(e.data);
+      const banner = document.getElementById('dry-run-banner');
+      const main = document.getElementById('main-content');
+      if (state.dryRun) {
+        banner.classList.remove('hidden');
+        main.classList.add('pt-10');
+      }
+    });
+  </script>
 </body>
 </html>

@@ -38,6 +38,7 @@ export type AppPhase =
 
 export interface AppState {
   phase: AppPhase;
+  dryRun?: boolean;
   listName?: string;
   places?: Place[];
   outputFile?: string;
