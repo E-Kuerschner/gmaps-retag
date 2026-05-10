@@ -18,6 +18,11 @@
 </head>
 <body class="min-h-screen bg-gray-50">
 
+  <!-- Dry-run banner -->
+  <div id="dry-run-banner" class="hidden bg-amber-400 text-amber-900 text-sm font-medium text-center py-2 px-4">
+    DRY RUN MODE — selectors will be validated but no changes will be written to your saved lists
+  </div>
+
   <header class="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4">
     <a href="/" class="text-gray-400 hover:text-gray-700 transition-colors">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -83,7 +88,7 @@
 
       <!-- Error log (appears if individual items fail) -->
       <div id="errors-container" class="hidden">
-        <h3 class="text-xs font-medium text-red-700 mb-2">Errors encountered</h3>
+        <h3 id="errors-heading" class="text-xs font-medium text-red-700 mb-2">Errors encountered</h3>
         <ul id="errors-list" class="space-y-1 max-h-48 overflow-y-auto text-xs text-red-600"></ul>
       </div>
     </section>
@@ -149,6 +154,7 @@
     }
 
     function applyState(state) {
+      document.getElementById('dry-run-banner').classList.toggle('hidden', !state.dryRun);
       const sectionId = sections[state.phase] || 'phase-select';
       showOnly(sectionId);
 
@@ -189,6 +195,21 @@
       container.classList.remove('hidden');
       const li = document.createElement('li');
       li.textContent = `${name}: ${problem}`;
+      list.appendChild(li);
+    });
+
+    evtSource.addEventListener('dryRunAction', e => {
+      const { name, action, targetList } = JSON.parse(e.data);
+      const container = document.getElementById('errors-container');
+      const list = document.getElementById('errors-list');
+      container.classList.remove('hidden');
+      document.getElementById('errors-heading').textContent = 'Actions that would be applied';
+      document.getElementById('errors-heading').className = 'text-xs font-medium text-amber-700 mb-2';
+      const li = document.createElement('li');
+      li.className = 'text-amber-700';
+      li.textContent = action === 'move'
+        ? `[would move] ${name} → ${targetList}`
+        : `[would remove] ${name}`;
       list.appendChild(li);
     });
 

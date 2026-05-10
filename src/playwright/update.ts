@@ -3,6 +3,7 @@ import { join } from 'path';
 import { mkdirSync } from 'fs';
 import type { ActionFile, ErrorEntry } from '../types.ts';
 import { setState, broadcast } from '../state.ts';
+import { isDryRun } from '../config.ts';
 
 const OUTPUT_DIR = join(process.cwd(), 'output');
 
@@ -32,7 +33,11 @@ export async function performUpdates(
   const page = await context.newPage();
 
   try {
-    setState({ phase: 'updating', message: 'Opening Google Maps…', progress: { current: 0, total: actions.length } });
+    setState({
+      phase: 'updating',
+      message: `${isDryRun ? '[DRY RUN] ' : ''}Opening Google Maps…`,
+      progress: { current: 0, total: actions.length },
+    });
 
     await page.goto('https://www.google.com/maps', { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
@@ -85,10 +90,8 @@ export async function performUpdates(
 
     for (let i = 0; i < actions.length; i++) {
       const action = actions[i];
-      setState({
-        message: `Processing ${i + 1}/${actions.length}: ${action.name}`,
-        progress: { current: i + 1, total: actions.length },
-      });
+      const label = `${isDryRun ? '[DRY RUN] ' : ''}Processing ${i + 1}/${actions.length}: ${action.name}`;
+      setState({ message: label, progress: { current: i + 1, total: actions.length } });
       broadcast('progress', { current: i + 1, total: actions.length, name: action.name });
 
       try {
@@ -135,56 +138,60 @@ export async function performUpdates(
           throw new Error(`Save-to-list popup did not appear for "${action.name}".`);
         }
 
-        if (action.action === 'remove') {
-          // Un-check / deselect the current list by clicking it.
-          // UNCERTAIN: The list entry is likely a checkbox row labelled with
-          // the list name. aria-checked="true" means currently saved to that list.
-          const currentListEntry = popup
-            .locator(`[aria-label*="${listName}"], :has-text("${listName}")`)
-            .first();
-          try {
-            await currentListEntry.waitFor({ state: 'visible', timeout: 5_000 });
-            await currentListEntry.click();
-          } catch {
-            throw new Error(`Could not find "${listName}" entry in popup for "${action.name}".`);
-          }
-        } else if (action.action === 'move') {
-          // Remove from current list first.
-          const currentListEntry = popup
-            .locator(`[aria-label*="${listName}"], :has-text("${listName}")`)
-            .first();
-          try {
-            await currentListEntry.waitFor({ state: 'visible', timeout: 5_000 });
-            await currentListEntry.click();
-            await page.waitForTimeout(500);
-          } catch {
-            throw new Error(`Could not deselect "${listName}" in popup for "${action.name}".`);
-          }
+        // Resolve and validate all popup entries first — this exercises the
+        // selectors regardless of whether dry-run is active.
+        // UNCERTAIN: The list entry is likely a checkbox row labelled with
+        // the list name. aria-checked="true" means currently saved to that list.
+        const currentListEntry = popup
+          .locator(`[aria-label*="${listName}"], :has-text("${listName}")`)
+          .first();
+        try {
+          await currentListEntry.waitFor({ state: 'visible', timeout: 5_000 });
+        } catch {
+          throw new Error(`Could not find "${listName}" entry in popup for "${action.name}".`);
+        }
 
-          // Now select the target list.
+        let targetListEntry = null;
+        if (action.action === 'move') {
           // UNCERTAIN: target list entry selector.
-          const targetListEntry = popup
+          targetListEntry = popup
             .locator(`[aria-label*="${action.targetList}"], :has-text("${action.targetList}")`)
             .first();
           try {
             await targetListEntry.waitFor({ state: 'visible', timeout: 5_000 });
-            await targetListEntry.click();
           } catch {
             throw new Error(
-              `Could not select target list "${action.targetList}" in popup for "${action.name}".`,
+              `Could not find target list "${action.targetList}" in popup for "${action.name}".`,
             );
           }
         }
 
-        // Dismiss the popup — some Maps versions auto-close on selection,
-        // others require pressing Escape or clicking outside.
-        await page.waitForTimeout(800);
-        try {
-          // UNCERTAIN: close/done button inside the popup.
-          const doneBtn = popup.locator('button:has-text("Done"), button:has-text("Close"), [aria-label="Close"]').first();
-          const isDoneVisible = await doneBtn.isVisible();
-          if (isDoneVisible) await doneBtn.click();
-        } catch { /* popup may have already closed */ }
+        if (isDryRun) {
+          const wouldDo = action.action === 'move'
+            ? `remove from "${listName}" and add to "${action.targetList}"`
+            : `remove from "${listName}"`;
+          console.log(`[dry-run] Would ${wouldDo}: ${action.name}`);
+          broadcast('dryRunAction', { name: action.name, action: action.action, targetList: action.targetList });
+          // Dismiss popup without making changes.
+          await page.keyboard.press('Escape');
+        } else {
+          await currentListEntry.click();
+
+          if (action.action === 'move') {
+            await page.waitForTimeout(500);
+            await targetListEntry!.click();
+          }
+
+          // Dismiss the popup — some Maps versions auto-close on selection,
+          // others require pressing Escape or clicking outside.
+          await page.waitForTimeout(800);
+          try {
+            // UNCERTAIN: close/done button inside the popup.
+            const doneBtn = popup.locator('button:has-text("Done"), button:has-text("Close"), [aria-label="Close"]').first();
+            const isDoneVisible = await doneBtn.isVisible();
+            if (isDoneVisible) await doneBtn.click();
+          } catch { /* popup may have already closed */ }
+        }
 
         await page.waitForTimeout(500);
 
@@ -209,8 +216,9 @@ export async function performUpdates(
 
     await saveErrors(errors, ts);
 
-    const doneMessage =
-      errors.length > 0
+    const doneMessage = isDryRun
+      ? `Dry run complete. ${actions.length - errors.length}/${actions.length} selector(s) validated. No changes were made.`
+      : errors.length > 0
         ? `Done. ${actions.length - errors.length}/${actions.length} succeeded. Check errors_${ts}.json for failures.`
         : `All ${actions.length} update(s) completed successfully.`;
 
