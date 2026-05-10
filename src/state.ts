@@ -1,4 +1,5 @@
 import type { AppState } from './types.ts';
+import { isDryRun } from './config.ts';
 
 type SSEController = ReadableStreamDefaultController<Uint8Array>;
 
@@ -24,7 +25,7 @@ export function broadcast(event: string, data: unknown) {
   }
 }
 
-let state: AppState = { phase: 'idle' };
+let state: AppState = { phase: 'idle', dryRun: isDryRun };
 
 export function getState(): AppState {
   return state;
