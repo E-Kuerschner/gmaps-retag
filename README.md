@@ -23,6 +23,14 @@ chmod +x gmaps-retag-linux-x64 && ./gmaps-retag-linux-x64
 
 On first launch the tool detects that Chromium isn't installed and downloads it automatically (~150 MB, cached permanently at `~/.cache/ms-playwright`). Subsequent runs start instantly.
 
+> **Known limitation — Chromium first-run install:** the auto-install currently works by
+> spawning `bun x playwright install chromium` or `npx playwright install chromium` as a
+> subprocess. This means it only succeeds if the user already has **Bun** or **Node.js**
+> installed — which defeats the purpose of a standalone binary for non-technical users.
+> The proper fix is to invoke Playwright's internal browser-download API directly from
+> within the compiled binary (no subprocess needed), which would make the install truly
+> self-contained. This is not yet implemented.
+
 ---
 
 ## Development setup
@@ -68,7 +76,7 @@ Start the server with `DRY_RUN=true` (or use the `dev:dry` / `start:dry` scripts
 Everything is written to `output/` (git-ignored except `.gitkeep`):
 
 | File pattern | Contents |
-|---|---|
+|---|---------|
 | `{list}_{ts}.json` | Raw collected places — name and Maps link |
 | `{list}_{ts}_actions.json` | User-confirmed actions consumed by the Update flow |
 | `errors_{ts}.json` | Per-item failures from either flow |
