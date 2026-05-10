@@ -1,0 +1,44 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # bun build --compile supports cross-compilation from a single Linux host.
+      # All five platform binaries are produced here in one job.
+      # chromium-bidi and electron are optional playwright-core deps we never use.
+      # Marking them external prevents the bundler failing on unresolvable requires
+      # while keeping the binary self-contained (those code paths are never executed).
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          FLAGS="--external chromium-bidi --external electron"
+          bun build --compile $FLAGS --target=bun-linux-x64    src/server.ts --outfile dist/gmaps-retag-linux-x64
+          bun build --compile $FLAGS --target=bun-linux-arm64  src/server.ts --outfile dist/gmaps-retag-linux-arm64
+          bun build --compile $FLAGS --target=bun-darwin-x64   src/server.ts --outfile dist/gmaps-retag-macos-x64
+          bun build --compile $FLAGS --target=bun-darwin-arm64 src/server.ts --outfile dist/gmaps-retag-macos-arm64
+          bun build --compile $FLAGS --target=bun-windows-x64  src/server.ts --outfile dist/gmaps-retag-win-x64.exe
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
