@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>gmaps-retag</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gray-50 flex items-center justify-center">
+  <div class="max-w-lg w-full mx-auto px-6">
+    <div class="text-center mb-10">
+      <h1 class="text-3xl font-bold text-gray-900 mb-2">gmaps-retag</h1>
+      <p class="text-gray-500">Manage your Google Maps saved lists</p>
+    </div>
+
+    <div class="grid gap-4">
+      <a href="/collect"
+        class="block rounded-xl border border-gray-200 bg-white p-6 shadow-sm hover:shadow-md hover:border-blue-300 transition-all group">
+        <div class="flex items-start gap-4">
+          <div class="rounded-lg bg-blue-50 p-3 group-hover:bg-blue-100 transition-colors">
+            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+          </div>
+          <div>
+            <h2 class="font-semibold text-gray-900 text-lg">1 · Collect &amp; Review</h2>
+            <p class="text-gray-500 text-sm mt-1">
+              Open a saved list from Google Maps, review all locations, and mark
+              which ones to remove or move to a different list.
+            </p>
+          </div>
+        </div>
+      </a>
+
+      <a href="/update"
+        class="block rounded-xl border border-gray-200 bg-white p-6 shadow-sm hover:shadow-md hover:border-green-300 transition-all group">
+        <div class="flex items-start gap-4">
+          <div class="rounded-lg bg-green-50 p-3 group-hover:bg-green-100 transition-colors">
+            <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </div>
+          <div>
+            <h2 class="font-semibold text-gray-900 text-lg">2 · Update</h2>
+            <p class="text-gray-500 text-sm mt-1">
+              Load an actions file produced in step 1 and let the browser
+              automatically apply all changes to your Google Maps lists.
+            </p>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <p class="text-center text-xs text-gray-400 mt-8">
+      A Playwright-powered browser window will open when you start either flow.
+      Make sure you are signed into Google Maps in that window.
+    </p>
+  </div>
+</body>
+</html>
