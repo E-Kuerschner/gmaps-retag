@@ -42,12 +42,15 @@ export async function collectList(
     // Give the user a moment to log in if the session isn't already authenticated.
     setState({ message: 'Waiting for Google Maps to load. Please log in if prompted.' });
 
-    // UNCERTAIN: Selector for the "Saved" entry in the left-panel navigation.
-    // In the current Maps UI it is a button/link rendered with aria-label="Saved"
-    // inside the header bar. If this fails, try '[data-tooltip="Saved"]' or
-    // 'a[href*="/maps/save"]'.
+    // Selector for the "Saved" navigation rail button.
+    // Primary: jsaction attribute is a stable internal identifier.
+    // Fallback: button containing the text "Saved".
+    // Does NOT have aria-label or data-tooltip in the current Maps UI.
+    // BRITTLE: jsaction values are internal to Google's event framework and can
+    // be renamed in any Maps deploy. If this breaks, rely on the text fallback
+    // or inspect the nav rail for a new jsaction value.
     const savedBtn = page
-      .locator('[aria-label="Saved"], [data-tooltip="Saved"]')
+      .locator('[jsaction="navigationrail.saved"], button:has-text("Saved")')
       .first();
 
     try {
@@ -104,39 +107,36 @@ export async function collectList(
     setState({ message: `Opened list "${listName}". Collecting places…` });
     await page.waitForTimeout(2_000);
 
-    // UNCERTAIN: The scrollable container for place items within a saved list.
-    // In the Maps UI the feed pane has role="feed" or a class like "m6QErb".
-    // We scroll this container to trigger lazy-loading.
-    const feed = page.locator('[role="feed"], .m6QErb').first();
+    // Scrollable container for place items.
+    // BRITTLE: DxyBCb is the unique class on the outer scroll container. Individual
+    // place items share XiKgde with the container but not DxyBCb. If scrolling
+    // stops working, inspect the container element and update this selector.
+    const feed = page.locator('div.DxyBCb').first();
 
-    // Scroll until no new items load for 3 consecutive attempts.
-    let previousCount = 0;
-    let stableRounds = 0;
-    while (stableRounds < 3) {
-      // UNCERTAIN: place item selector within the feed. Article role is common
-      // in Maps; fallback to any div with a data-result-index attribute.
-      const items = page.locator('[role="feed"] [role="article"], [data-result-index]');
-      const count = await items.count();
-
-      if (count === previousCount) {
-        stableRounds++;
-      } else {
-        stableRounds = 0;
-        previousCount = count;
-      }
-
+    // Scroll to the absolute bottom, wait for lazy-loaded items to render, then
+    // check if the scrollHeight grew (meaning new content appeared). Repeat until
+    // we are truly at the bottom.
+    setState({ message: `Opened list "${listName}". Scrolling to load all places…` });
+    while (true) {
       try {
-        await feed.evaluate((el) => el.scrollBy(0, 600));
+        await feed.evaluate((el) => { el.scrollTo(0, el.scrollHeight); });
       } catch {
-        // Feed element not found — fall back to page scroll.
+        // Feed element not found — fall back to pressing End and assume one pass is enough.
         await page.keyboard.press('End');
+        break;
       }
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(800); // let lazy-loaded items render
+      const atBottom = await feed.evaluate(
+        (el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1,
+      ).catch(() => true);
+      if (atBottom) break;
     }
 
-    // Re-query after scrolling.
-    // UNCERTAIN: exact selectors — adjust if items are not captured.
-    const items = page.locator('[role="feed"] [role="article"], [data-result-index]');
+    // Collect all place items now that the full list is loaded.
+    // BRITTLE: XiKgde is a minified/obfuscated class name shared by both the
+    // scroll container (DxyBCb) and individual items. :not(.DxyBCb) excludes the
+    // container. If count comes back 0, inspect a place card and update this selector.
+    const items = page.locator('div.XiKgde:not(.DxyBCb)');
     const total = await items.count();
 
     setState({ message: `Found ${total} place(s). Extracting details…` });
@@ -144,21 +144,19 @@ export async function collectList(
     for (let i = 0; i < total; i++) {
       const item = items.nth(i);
       try {
-        // UNCERTAIN: place name is typically in an <h3> or an element with
-        // aria-label inside the article. Try both.
-        const nameEl = item.locator('h3, [aria-label]').first();
-        let name = (await nameEl.textContent())?.trim();
-        if (!name) {
-          name = (await nameEl.getAttribute('aria-label'))?.trim();
-        }
+        // Place name is in .fontHeadlineSmall within the item card.
+        // BRITTLE: fontHeadlineSmall is a Maps utility class — less likely to
+        // change than a random hash class, but still not a semantic attribute.
+        // Fallback: try 'h3' or '[aria-label]' on the clickable button within the item.
+        const nameEl = item.locator('.fontHeadlineSmall').first();
+        const name = (await nameEl.textContent())?.trim();
         if (!name) {
           throw new Error('Could not read place name');
         }
 
-        // UNCERTAIN: the place link. Each article usually contains an <a> whose
-        // href points to the Maps place URL.
-        const linkEl = item.locator('a[href]').first();
-        const link = (await linkEl.getAttribute('href'))?.trim() ?? '';
+        // The update flow finds places by name within the open list and does not
+        // navigate to individual place URLs, so link is not needed here.
+        const link = '';
 
         places.push({ name, link });
         broadcast('place', { name, link });

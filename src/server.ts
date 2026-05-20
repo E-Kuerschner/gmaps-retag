@@ -1,10 +1,10 @@
 import { join } from 'path';
-import { readdirSync, existsSync, mkdirSync } from 'fs';
+import { readdirSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { getState, setState, addSSEClient, removeSSEClient } from './state.ts';
 import { getBrowserContext, closeBrowser } from './playwright/browser.ts';
 import { collectList } from './playwright/collect.ts';
 import { performUpdates } from './playwright/update.ts';
-import type { PlaceAction, ActionFile } from './types.ts';
+import type { PlaceAction, ActionFile, CollectedList } from './types.ts';
 
 const PUBLIC_DIR = join(import.meta.dir, '..', 'public');
 const OUTPUT_DIR = join(process.cwd(), 'output');
@@ -80,6 +80,39 @@ const server = Bun.serve({
             .reverse()
         : [];
       return json(files);
+    }
+
+    // ── GET /api/collect-files  (list raw collected-place files) ─────────────
+    if (pathname === '/api/collect-files' && method === 'GET') {
+      const files = existsSync(OUTPUT_DIR)
+        ? readdirSync(OUTPUT_DIR)
+            .filter((f) => f.endsWith('.json') && !f.endsWith('_actions.json') && !f.startsWith('errors_'))
+            .sort()
+            .reverse()
+        : [];
+      return json(files);
+    }
+
+    // ── DELETE /api/collect-files/:name ──────────────────────────────────────
+    if (pathname.startsWith('/api/collect-files/') && method === 'DELETE') {
+      const fileName = decodeURIComponent(pathname.replace('/api/collect-files/', ''));
+      if (!fileName || fileName.includes('..')) return json({ error: 'Invalid file name' }, 400);
+      const filePath = join(OUTPUT_DIR, fileName);
+      if (!existsSync(filePath)) return json({ error: 'Not found' }, 404);
+      unlinkSync(filePath);
+      return json({ ok: true });
+    }
+
+    // ── POST /api/collect/load  (restore a past collection into review state) ─
+    if (pathname === '/api/collect/load' && method === 'POST') {
+      const body = (await req.json()) as { fileName?: string };
+      const fileName = body.fileName?.trim();
+      if (!fileName || fileName.includes('..')) return json({ error: 'Invalid file name' }, 400);
+      const filePath = join(OUTPUT_DIR, fileName);
+      if (!existsSync(filePath)) return json({ error: 'Not found' }, 404);
+      const data: CollectedList = JSON.parse(await Bun.file(filePath).text());
+      setState({ phase: 'review', listName: data.listName, places: data.places, outputFile: filePath, message: undefined });
+      return json({ ok: true });
     }
 
     // ── GET /api/action-files/:fileName  (preview a single action file) ────────

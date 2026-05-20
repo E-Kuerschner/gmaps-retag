@@ -58,6 +58,14 @@
       </p>
     </section>
 
+    <!-- ── Past collections ─────────────────────────────────────────────────── -->
+    <section id="past-collections" class="hidden bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
+        <h3 class="text-sm font-medium text-gray-700">Past collections</h3>
+      </div>
+      <ul id="past-collections-list" class="divide-y divide-gray-100 text-sm"></ul>
+    </section>
+
     <!-- ── Phase: collecting ─────────────────────────────────────────────── -->
     <section id="phase-collecting" class="hidden bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
       <div class="flex items-center gap-3 mb-4">
@@ -74,12 +82,20 @@
           Review places in <span id="review-list-name" class="text-blue-600"></span>
           <span id="review-count" class="ml-2 text-sm text-gray-400"></span>
         </h2>
-        <button
-          id="confirm-btn"
-          class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors"
-        >
-          Save Actions
-        </button>
+        <div class="flex gap-2">
+          <button
+            id="new-collection-btn"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            New Collection
+          </button>
+          <button
+            id="confirm-btn"
+            class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors"
+          >
+            Save Actions
+          </button>
+        </div>
       </div>
 
       <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -166,6 +182,7 @@
     function showOnly(id) {
       ['phase-input', 'phase-collecting', 'phase-review', 'phase-done', 'phase-error']
         .forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
+      document.getElementById('past-collections').classList.toggle('hidden', id !== 'phase-input');
     }
 
     function applyState(state) {
@@ -323,10 +340,62 @@
       collectedPlaces = [];
       document.getElementById('list-name').value = '';
       document.getElementById('live-places').innerHTML = '';
+      loadPastCollections();
     }
 
     document.getElementById('reset-btn').addEventListener('click', reset);
     document.getElementById('error-reset-btn').addEventListener('click', reset);
+    document.getElementById('new-collection-btn').addEventListener('click', reset);
+
+    // ── Past collections ─────────────────────────────────────────────────────
+    async function loadPastCollections() {
+      const res = await fetch('/api/collect-files');
+      const files = await res.json();
+      const section = document.getElementById('past-collections');
+      const list = document.getElementById('past-collections-list');
+
+      if (files.length === 0) {
+        section.classList.add('hidden');
+        return;
+      }
+
+      list.innerHTML = '';
+      files.forEach(fileName => {
+        const li = document.createElement('li');
+        li.className = 'flex items-center justify-between px-4 py-3';
+        li.innerHTML = `
+          <span class="text-gray-600 font-mono text-xs truncate mr-4">${escHtml(fileName)}</span>
+          <div class="flex gap-3 shrink-0">
+            <button class="load-btn text-blue-600 hover:text-blue-800 text-xs font-medium" data-file="${escHtml(fileName)}">Load</button>
+            <button class="delete-btn text-red-500 hover:text-red-700 text-xs font-medium" data-file="${escHtml(fileName)}">Delete</button>
+          </div>
+        `;
+        list.appendChild(li);
+      });
+
+      list.querySelectorAll('.load-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          await fetch('/api/collect/load', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileName: btn.dataset.file }),
+          });
+          // State update arrives via SSE and triggers applyState → review phase
+        });
+      });
+
+      list.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm(`Delete ${btn.dataset.file}?`)) return;
+          await fetch(`/api/collect-files/${encodeURIComponent(btn.dataset.file)}`, { method: 'DELETE' });
+          loadPastCollections();
+        });
+      });
+
+      section.classList.remove('hidden');
+    }
+
+    loadPastCollections();
 
     // ── Helpers ──────────────────────────────────────────────────────────────
     function escHtml(str) {

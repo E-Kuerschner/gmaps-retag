@@ -44,9 +44,10 @@ export async function performUpdates(
     setState({ message: 'Navigating to saved list…' });
 
     // Navigate to the source list — same flow as collect.
-    // UNCERTAIN: selector for "Saved" button.
+    // Selector for the "Saved" navigation rail button (no aria-label in current Maps UI).
+    // BRITTLE: jsaction values are internal to Google's event framework — see collect.ts.
     const savedBtn = page
-      .locator('[aria-label="Saved"], [data-tooltip="Saved"]')
+      .locator('[jsaction="navigationrail.saved"], button:has-text("Saved")')
       .first();
     try {
       await savedBtn.waitFor({ state: 'visible', timeout: 60_000 });
@@ -96,8 +97,11 @@ export async function performUpdates(
 
       try {
         // Find the place in the list by name.
-        // UNCERTAIN: exact selector — Maps renders place names in headings or
-        // aria-labelled elements inside article cards.
+        // BRITTLE: role="article" does not exist on place cards in the current Maps UI
+        // (confirmed during collect work — actual wrapper is div.XiKgde, itself a brittle
+        // obfuscated class). The aria-label fallback may also not match. If this stops
+        // working, update to match whatever item selector collect.ts is using, scoped
+        // with :has-text() to filter by name.
         const placeCard = page
           .locator(`[role="article"]:has-text("${action.name}"), [aria-label*="${action.name}"]`)
           .first();
@@ -115,6 +119,9 @@ export async function performUpdates(
         // UNCERTAIN: selector for the "Saved" / bookmark icon in the detail panel.
         // In the Maps UI it is typically a button with aria-label containing "Save"
         // or the label of the list it's already saved to.
+        // BRITTLE: data-value="Save" is an internal attribute with no semantic
+        // guarantee. The aria-label fallback is more durable but its exact wording
+        // ("Saved", "Save to list", etc.) may vary by Maps version.
         const saveIconBtn = page
           .locator('[aria-label*="Saved"], [data-value="Save"], button:has-text("Saved")')
           .first();
