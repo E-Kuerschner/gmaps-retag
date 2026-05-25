@@ -15,8 +15,12 @@ import { type Page } from 'playwright';
 
 /** Opens a named saved list from the saved lists panel. */
 export async function openListByName(page: Page, listName: string): Promise<Page> {
-  // UNCERTAIN: button label includes a dynamic place-count suffix (e.g. "· 4 places") — use partial match.
-  const listBtn = page.getByRole('button', { name: listName, exact: false });
+  // The button label includes a dynamic suffix (e.g. "· 4 places") so we can't use exact role matching.
+  // Instead match the .fontBodyLarge child, which contains only the bare list name, with an anchored regex.
+  const escaped = listName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const listBtn = page.locator('button').filter({
+    has: page.locator('.fontBodyLarge', { hasText: new RegExp(`^${escaped}$`) }),
+  });
   try {
     await listBtn.waitFor({ state: 'visible', timeout: 15_000 });
   } catch {
