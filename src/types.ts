@@ -1,6 +1,7 @@
 export interface Place {
   name: string;
   note?: string | null;
+  permanentlyClosed?: boolean;
 }
 
 export interface PlaceAction {

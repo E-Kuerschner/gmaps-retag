@@ -137,7 +137,11 @@ export async function collectList(
           // Textarea absent or inaccessible — no note.
         }
 
-        const place: Place = { name, note };
+        // UNCERTAIN: "Permanently closed" text may vary by locale.
+        const cardText = (await item.textContent()) ?? '';
+        const permanentlyClosed = cardText.includes('Permanently closed') || undefined;
+
+        const place: Place = { name, note, permanentlyClosed };
         places.push(place);
         broadcast('place', place);
       } catch {
