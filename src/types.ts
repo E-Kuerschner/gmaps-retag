@@ -12,7 +12,7 @@ export interface PlaceAction {
 
 export interface CollectedList {
   listName: string;
-  timestamp: string;
+  lastUpdated: string;
   places: Place[];
 }
 

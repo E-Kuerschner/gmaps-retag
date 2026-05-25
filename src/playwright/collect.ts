@@ -154,11 +154,11 @@ export async function collectList(
       }
     }
 
-    const outputFileName = `${safeFileName(listName)}_${ts}.json`;
+    const outputFileName = `${safeFileName(listName)}.json`;
     const outputFile = join(DATA_DIR, outputFileName);
     const data: CollectedList = {
       listName,
-      timestamp: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
       places,
     };
     await Bun.write(outputFile, JSON.stringify(data, null, 2));

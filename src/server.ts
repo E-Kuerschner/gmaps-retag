@@ -91,9 +91,16 @@ const server = Bun.serve({
         ? readdirSync(DATA_DIR)
             .filter((f) => f.endsWith('.json') && !f.endsWith('_actions.json') && f !== 'saved-lists.json')
             .sort()
-            .reverse()
         : [];
-      return json(files);
+      const result = await Promise.all(files.map(async (fileName) => {
+        try {
+          const data: CollectedList = JSON.parse(await Bun.file(join(DATA_DIR, fileName)).text());
+          return { fileName, listName: data.listName, lastUpdated: data.lastUpdated ?? null };
+        } catch {
+          return { fileName, listName: fileName, lastUpdated: null };
+        }
+      }));
+      return json(result);
     }
 
     // ── DELETE /api/collect-files/:name ──────────────────────────────────────

@@ -63,6 +63,6 @@ Written to `output/` (git-ignored except `.gitkeep`):
 
 | Pattern | Contents |
 |---|---|
-| `{list}_{ts}.json` | Raw scraped places (`CollectedList`) |
+| `{list}.json` | Raw scraped places (`CollectedList`) — overwritten on each re-collect; `lastUpdated` inside tracks when it was last run |
 | `{list}_{ts}_actions.json` | User-confirmed actions (`ActionFile`) |
 | `errors_{ts}.json` | Per-item failures |

@@ -189,14 +189,20 @@
       }
 
       list.innerHTML = '';
-      files.forEach(fileName => {
+      files.forEach(({ fileName, listName, lastUpdated }) => {
+        const updatedLabel = lastUpdated
+          ? new Date(lastUpdated).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+          : '';
         const li = document.createElement('li');
         li.className = 'flex items-center justify-between px-4 py-3';
         li.innerHTML = `
           <a href="/collections/${encodeURIComponent(fileName)}"
-             class="text-blue-600 hover:underline font-mono text-xs truncate mr-4">${escHtml(fileName)}</a>
-          <button class="delete-btn text-red-500 hover:text-red-700 text-xs font-medium shrink-0"
-                  data-file="${escHtml(fileName)}">Delete</button>
+             class="text-blue-600 hover:underline font-medium text-sm truncate mr-4">${escHtml(listName || fileName)}</a>
+          <div class="flex items-center gap-4 shrink-0">
+            ${updatedLabel ? `<span class="text-xs text-gray-400">${escHtml(updatedLabel)}</span>` : ''}
+            <button class="delete-btn text-red-500 hover:text-red-700 text-xs font-medium"
+                    data-file="${escHtml(fileName)}">Delete</button>
+          </div>
         `;
         list.appendChild(li);
       });
