@@ -7,7 +7,7 @@ import { isDryRun } from '../config.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 
-const OUTPUT_DIR = join(process.cwd(), 'output');
+const LOGS_DIR = join(process.cwd(), 'output', 'logs');
 
 function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-');
@@ -15,8 +15,8 @@ function timestamp(): string {
 
 async function saveErrors(errors: ErrorEntry[], ts: string): Promise<void> {
   if (errors.length === 0) return;
-  mkdirSync(OUTPUT_DIR, { recursive: true });
-  const path = join(OUTPUT_DIR, `errors_${ts}.json`);
+  mkdirSync(LOGS_DIR, { recursive: true });
+  const path = join(LOGS_DIR, `errors_${ts}.json`);
   await Bun.write(path, JSON.stringify(errors, null, 2));
   console.error(`[update] ${errors.length} error(s) written to ${path}`);
 }
@@ -177,7 +177,7 @@ export async function performUpdates(
     const doneMessage = isDryRun
       ? `Dry run complete. ${actions.length - errors.length}/${actions.length} selector(s) validated. No changes were made.`
       : errors.length > 0
-        ? `Done. ${actions.length - errors.length}/${actions.length} succeeded. Check errors_${ts}.json for failures.`
+        ? `Done. ${actions.length - errors.length}/${actions.length} succeeded. Check logs/errors_${ts}.json for failures.`
         : `All ${actions.length} update(s) completed successfully.`;
 
     setUpdateState({ status: 'done', message: doneMessage });

@@ -6,7 +6,24 @@ import { setCollectState, broadcast } from '../state.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 
-const OUTPUT_DIR = join(process.cwd(), 'output');
+const SAVED_LISTS_FILE = 'saved-lists.json';
+
+const DATA_DIR = join(process.cwd(), 'output', 'data');
+const LOGS_DIR = join(process.cwd(), 'output', 'logs');
+
+// List name is in .fontBodyLarge inside each list button; other text in the button
+// (author, sharing status) lives in sibling elements and is intentionally excluded.
+async function scrapeSavedListNames(page: Page): Promise<string[]> {
+  const nameEls = page.locator('button .fontBodyLarge');
+  await nameEls.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
+  const count = await nameEls.count();
+  const names: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const text = (await nameEls.nth(i).textContent())?.trim();
+    if (text) names.push(text);
+  }
+  return names;
+}
 
 function safeFileName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, '_');
@@ -18,7 +35,8 @@ function timestamp(): string {
 
 async function saveErrors(errors: ErrorEntry[], ts: string): Promise<void> {
   if (errors.length === 0) return;
-  const path = join(OUTPUT_DIR, `errors_${ts}.json`);
+  mkdirSync(LOGS_DIR, { recursive: true });
+  const path = join(LOGS_DIR, `errors_${ts}.json`);
   await Bun.write(path, JSON.stringify(errors, null, 2));
   console.error(`[collect] ${errors.length} error(s) written to ${path}`);
 }
@@ -27,7 +45,7 @@ export async function collectList(
   context: BrowserContext,
   listName: string,
 ): Promise<string> {
-  mkdirSync(OUTPUT_DIR, { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true });
 
   let page: Page | undefined;
   const errors: ErrorEntry[] = [];
@@ -44,6 +62,16 @@ export async function collectList(
       throw new Error(
         'Could not find the "Saved" button. Make sure you are logged into Google Maps.',
       );
+    }
+
+    // Scrape all list names while the Lists panel is visible — best-effort, non-fatal.
+    try {
+      const allListNames = await scrapeSavedListNames(page);
+      if (allListNames.length > 0) {
+        await Bun.write(join(DATA_DIR, SAVED_LISTS_FILE), JSON.stringify(allListNames, null, 2));
+      }
+    } catch {
+      // Selector drift — list name discovery skipped this run.
     }
 
     setCollectState({ message: `Looking for list "${listName}"…` });
@@ -122,7 +150,7 @@ export async function collectList(
     }
 
     const outputFileName = `${safeFileName(listName)}_${ts}.json`;
-    const outputFile = join(OUTPUT_DIR, outputFileName);
+    const outputFile = join(DATA_DIR, outputFileName);
     const data: CollectedList = {
       listName,
       timestamp: new Date().toISOString(),

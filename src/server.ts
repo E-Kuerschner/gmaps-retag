@@ -7,9 +7,11 @@ import { performUpdates } from './playwright/update.ts';
 import type { PlaceAction, ActionFile, CollectedList } from './types.ts';
 
 const PUBLIC_DIR = join(import.meta.dir, '..', 'public');
-const OUTPUT_DIR = join(process.cwd(), 'output');
+const DATA_DIR = join(process.cwd(), 'output', 'data');
+const LOGS_DIR = join(process.cwd(), 'output', 'logs');
 
-mkdirSync(OUTPUT_DIR, { recursive: true });
+mkdirSync(DATA_DIR, { recursive: true });
+mkdirSync(LOGS_DIR, { recursive: true });
 
 function html(path: string): Response {
   return new Response(Bun.file(join(PUBLIC_DIR, path)), {
@@ -69,17 +71,25 @@ const server = Bun.serve({
     if (pathname.startsWith('/api/collections/') && method === 'GET') {
       const fileName = decodeURIComponent(pathname.replace('/api/collections/', ''));
       if (!fileName || fileName.includes('..')) return json({ error: 'Invalid file name' }, 400);
-      const filePath = join(OUTPUT_DIR, fileName);
+      const filePath = join(DATA_DIR, fileName);
       if (!existsSync(filePath)) return json({ error: 'Not found' }, 404);
+      const content = await Bun.file(filePath).text();
+      return new Response(content, { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    // ── GET /api/saved-lists  (all known saved list names, written during collect) ─
+    if (pathname === '/api/saved-lists' && method === 'GET') {
+      const filePath = join(DATA_DIR, 'saved-lists.json');
+      if (!existsSync(filePath)) return json([]);
       const content = await Bun.file(filePath).text();
       return new Response(content, { headers: { 'Content-Type': 'application/json' } });
     }
 
     // ── GET /api/collect-files  (list of collection files for /collect page) ─
     if (pathname === '/api/collect-files' && method === 'GET') {
-      const files = existsSync(OUTPUT_DIR)
-        ? readdirSync(OUTPUT_DIR)
-            .filter((f) => f.endsWith('.json') && !f.endsWith('_actions.json') && !f.startsWith('errors_'))
+      const files = existsSync(DATA_DIR)
+        ? readdirSync(DATA_DIR)
+            .filter((f) => f.endsWith('.json') && !f.endsWith('_actions.json') && f !== 'saved-lists.json')
             .sort()
             .reverse()
         : [];
@@ -90,7 +100,7 @@ const server = Bun.serve({
     if (pathname.startsWith('/api/collect-files/') && method === 'DELETE') {
       const fileName = decodeURIComponent(pathname.replace('/api/collect-files/', ''));
       if (!fileName || fileName.includes('..')) return json({ error: 'Invalid file name' }, 400);
-      const filePath = join(OUTPUT_DIR, fileName);
+      const filePath = join(DATA_DIR, fileName);
       if (!existsSync(filePath)) return json({ error: 'Not found' }, 404);
       unlinkSync(filePath);
       return json({ ok: true });
@@ -131,7 +141,7 @@ const server = Bun.serve({
 
       if (!collectionFile) return json({ error: 'collectionFile is required' }, 400);
 
-      const collectionPath = join(OUTPUT_DIR, collectionFile);
+      const collectionPath = join(DATA_DIR, collectionFile);
       if (!existsSync(collectionPath)) return json({ error: 'Collection file not found' }, 404);
 
       const current = getState();
@@ -143,7 +153,7 @@ const server = Bun.serve({
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       const safeName = collectionData.listName.replace(/[^a-z0-9]/gi, '_');
       const actionFileName = `${safeName}_${ts}_actions.json`;
-      const actionFilePath = join(OUTPUT_DIR, actionFileName);
+      const actionFilePath = join(DATA_DIR, actionFileName);
 
       const actionData: ActionFile = {
         listName: collectionData.listName,
@@ -167,6 +177,18 @@ const server = Bun.serve({
     // ── POST /api/update/reset ────────────────────────────────────────────────
     if (pathname === '/api/update/reset' && method === 'POST') {
       setUpdateState({ status: 'idle', message: undefined, progress: undefined });
+      return json({ ok: true });
+    }
+
+    // ── POST /api/log-error  (client-side error logging) ────────────────────
+    if (pathname === '/api/log-error' && method === 'POST') {
+      const body = (await req.json()) as { message?: string };
+      const message = body.message?.trim();
+      if (message) {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const entry = [{ location: 'client', problem: message, timestamp: new Date().toISOString() }];
+        await Bun.write(join(LOGS_DIR, `errors_${ts}.json`), JSON.stringify(entry, null, 2));
+      }
       return json({ ok: true });
     }
 

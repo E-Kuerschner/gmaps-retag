@@ -51,6 +51,12 @@ The `phase` field in `AppState` is the discriminant; UI pages switch sections ba
 
 Google Maps uses dynamically generated CSS class names. All Playwright selectors use `aria-label`, `role`, and text-content selectors. Uncertain selectors are annotated with `// UNCERTAIN:` comments — these are the first things to check when Maps updates break the automation.
 
+### Keeping README.md up to date
+
+Update `README.md` whenever you:
+- Add, remove, or change an API endpoint (update the Routing section)
+- Change architectural or system design (data flow, state model, SSE communication, Playwright modules, etc.)
+
 ### Output files
 
 Written to `output/` (git-ignored except `.gitkeep`):
