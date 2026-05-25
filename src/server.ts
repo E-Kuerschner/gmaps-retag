@@ -1,6 +1,6 @@
 import { join } from 'path';
 import { readdirSync, existsSync, mkdirSync, unlinkSync } from 'fs';
-import { getState, setState, addSSEClient, removeSSEClient } from './state.ts';
+import { getState, setCollectState, setUpdateState, addSSEClient, removeSSEClient } from './state.ts';
 import { getBrowserContext, closeBrowser } from './playwright/browser.ts';
 import { collectList } from './playwright/collect.ts';
 import { performUpdates } from './playwright/update.ts';
@@ -32,7 +32,6 @@ function makeSSEResponse(): Response {
     start(c) {
       ctrl = c;
       addSSEClient(ctrl);
-      // Immediately send current state so the client doesn't wait.
       ctrl.enqueue(enc.encode(`event: state\ndata: ${JSON.stringify(getState())}\n\n`));
     },
     cancel() {
@@ -61,28 +60,22 @@ const server = Bun.serve({
     // ── Static pages ─────────────────────────────────────────────────────────
     if (pathname === '/' || pathname === '/index.html') return html('index.html');
     if (pathname === '/collect') return html('collect.html');
-    if (pathname === '/update') return html('update.html');
+    if (pathname.startsWith('/collections/')) return html('collection.html');
 
     // ── SSE stream ───────────────────────────────────────────────────────────
     if (pathname === '/api/events') return makeSSEResponse();
 
-    // ── GET /api/state ───────────────────────────────────────────────────────
-    if (pathname === '/api/state' && method === 'GET') {
-      return json(getState());
+    // ── GET /api/collections/:fileName  (collection data for the collection page) ─
+    if (pathname.startsWith('/api/collections/') && method === 'GET') {
+      const fileName = decodeURIComponent(pathname.replace('/api/collections/', ''));
+      if (!fileName || fileName.includes('..')) return json({ error: 'Invalid file name' }, 400);
+      const filePath = join(OUTPUT_DIR, fileName);
+      if (!existsSync(filePath)) return json({ error: 'Not found' }, 404);
+      const content = await Bun.file(filePath).text();
+      return new Response(content, { headers: { 'Content-Type': 'application/json' } });
     }
 
-    // ── GET /api/action-files  (list files available for the update flow) ────
-    if (pathname === '/api/action-files' && method === 'GET') {
-      const files = existsSync(OUTPUT_DIR)
-        ? readdirSync(OUTPUT_DIR)
-            .filter((f) => f.endsWith('_actions.json'))
-            .sort()
-            .reverse()
-        : [];
-      return json(files);
-    }
-
-    // ── GET /api/collect-files  (list raw collected-place files) ─────────────
+    // ── GET /api/collect-files  (list of collection files for /collect page) ─
     if (pathname === '/api/collect-files' && method === 'GET') {
       const files = existsSync(OUTPUT_DIR)
         ? readdirSync(OUTPUT_DIR)
@@ -103,28 +96,6 @@ const server = Bun.serve({
       return json({ ok: true });
     }
 
-    // ── POST /api/collect/load  (restore a past collection into review state) ─
-    if (pathname === '/api/collect/load' && method === 'POST') {
-      const body = (await req.json()) as { fileName?: string };
-      const fileName = body.fileName?.trim();
-      if (!fileName || fileName.includes('..')) return json({ error: 'Invalid file name' }, 400);
-      const filePath = join(OUTPUT_DIR, fileName);
-      if (!existsSync(filePath)) return json({ error: 'Not found' }, 404);
-      const data: CollectedList = JSON.parse(await Bun.file(filePath).text());
-      setState({ phase: 'review', listName: data.listName, places: data.places, outputFile: filePath, message: undefined });
-      return json({ ok: true });
-    }
-
-    // ── GET /api/action-files/:fileName  (preview a single action file) ────────
-    if (pathname.startsWith('/api/action-files/') && method === 'GET') {
-      const fileName = decodeURIComponent(pathname.replace('/api/action-files/', ''));
-      if (!fileName || fileName.includes('..')) return json({ error: 'Invalid file name' }, 400);
-      const filePath = join(OUTPUT_DIR, fileName);
-      if (!existsSync(filePath)) return json({ error: 'Not found' }, 404);
-      const content = await Bun.file(filePath).text();
-      return new Response(content, { headers: { 'Content-Type': 'application/json' } });
-    }
-
     // ── POST /api/collect/start ───────────────────────────────────────────────
     if (pathname === '/api/collect/start' && method === 'POST') {
       const body = (await req.json()) as { listName?: string };
@@ -132,92 +103,70 @@ const server = Bun.serve({
       if (!listName) return json({ error: 'listName is required' }, 400);
 
       const current = getState();
-      if (current.phase === 'collecting' || current.phase === 'updating') {
+      if (current.collect.status === 'running' || current.update.status === 'running') {
         return json({ error: 'An operation is already in progress' }, 409);
       }
 
-      setState({ phase: 'collecting', listName, places: [], outputFile: undefined, message: 'Starting…' });
+      setCollectState({ status: 'running', listName, outputFile: undefined, message: 'Starting…' });
 
-      // Fire-and-forget — progress is pushed via SSE.
       getBrowserContext()
         .then((ctx) => collectList(ctx, listName))
         .catch((err: unknown) => {
-          setState({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
+          setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
         });
 
       return json({ ok: true });
     }
 
-    // ── POST /api/collect/confirm ─────────────────────────────────────────────
-    if (pathname === '/api/collect/confirm' && method === 'POST') {
-      const body = (await req.json()) as { actions?: PlaceAction[] };
-      const { actions = [] } = body;
-
-      const state = getState();
-      if (!state.listName || !state.outputFile) {
-        return json({ error: 'No active collection to confirm' }, 400);
-      }
-
-      setState({ phase: 'confirming', message: 'Saving action file…' });
-
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const safeName = state.listName.replace(/[^a-z0-9]/gi, '_');
-      const actionFilePath = join(OUTPUT_DIR, `${safeName}_${ts}_actions.json`);
-
-      const actionData: ActionFile = {
-        listName: state.listName,
-        sourceFile: state.outputFile,
-        timestamp: new Date().toISOString(),
-        actions,
-      };
-
-      await Bun.write(actionFilePath, JSON.stringify(actionData, null, 2));
-
-      setState({
-        phase: 'done',
-        actionFile: actionFilePath,
-        message: `Action file saved: ${actionFilePath}`,
-      });
-
-      return json({ ok: true, actionFile: actionFilePath });
+    // ── POST /api/collect/reset ───────────────────────────────────────────────
+    if (pathname === '/api/collect/reset' && method === 'POST') {
+      setCollectState({ status: 'idle', listName: undefined, outputFile: undefined, message: undefined });
+      return json({ ok: true });
     }
 
-    // ── POST /api/update/start ────────────────────────────────────────────────
+    // ── POST /api/update/start  (create action file + launch update workflow) ─
     if (pathname === '/api/update/start' && method === 'POST') {
-      const body = (await req.json()) as { fileName?: string };
-      const fileName = body.fileName?.trim();
-      if (!fileName) return json({ error: 'fileName is required' }, 400);
+      const body = (await req.json()) as { collectionFile?: string; actions?: PlaceAction[] };
+      const { collectionFile, actions = [] } = body;
 
-      const filePath = join(OUTPUT_DIR, fileName);
-      if (!existsSync(filePath)) return json({ error: 'File not found' }, 404);
+      if (!collectionFile) return json({ error: 'collectionFile is required' }, 400);
+
+      const collectionPath = join(OUTPUT_DIR, collectionFile);
+      if (!existsSync(collectionPath)) return json({ error: 'Collection file not found' }, 404);
 
       const current = getState();
-      if (current.phase === 'collecting' || current.phase === 'updating') {
+      if (current.collect.status === 'running' || current.update.status === 'running') {
         return json({ error: 'An operation is already in progress' }, 409);
       }
 
-      setState({ phase: 'updating', message: 'Starting update…', progress: undefined });
+      const collectionData: CollectedList = JSON.parse(await Bun.file(collectionPath).text());
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const safeName = collectionData.listName.replace(/[^a-z0-9]/gi, '_');
+      const actionFileName = `${safeName}_${ts}_actions.json`;
+      const actionFilePath = join(OUTPUT_DIR, actionFileName);
+
+      const actionData: ActionFile = {
+        listName: collectionData.listName,
+        collectionFile,
+        timestamp: new Date().toISOString(),
+        actions,
+      };
+      await Bun.write(actionFilePath, JSON.stringify(actionData, null, 2));
+
+      setUpdateState({ status: 'running', message: 'Starting update…', progress: undefined });
 
       getBrowserContext()
-        .then((ctx) => performUpdates(ctx, filePath))
+        .then((ctx) => performUpdates(ctx, actionFilePath))
         .catch((err: unknown) => {
-          setState({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
+          setUpdateState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
         });
 
       return json({ ok: true });
     }
 
-    // ── POST /api/reset ───────────────────────────────────────────────────────
-    if (pathname === '/api/reset' && method === 'POST') {
-      setState({
-        phase: 'idle',
-        listName: undefined,
-        places: undefined,
-        outputFile: undefined,
-        actionFile: undefined,
-        message: undefined,
-        progress: undefined,
-      });
+    // ── POST /api/update/reset ────────────────────────────────────────────────
+    if (pathname === '/api/update/reset' && method === 'POST') {
+      setUpdateState({ status: 'idle', message: undefined, progress: undefined });
       return json({ ok: true });
     }
 

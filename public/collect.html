@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Collect &amp; Review · gmaps-retag</title>
+  <title>Collect · gmaps-retag</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .spinner {
@@ -18,7 +18,6 @@
 </head>
 <body class="min-h-screen bg-gray-50">
 
-  <!-- Dry-run banner -->
   <div id="dry-run-banner" class="hidden bg-amber-400 text-amber-900 text-sm font-medium text-center py-2 px-4">
     DRY RUN MODE — no changes will be made to your saved lists during the Update step
   </div>
@@ -29,14 +28,14 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
       </svg>
     </a>
-    <h1 class="font-semibold text-gray-900">Collect &amp; Review</h1>
+    <h1 class="font-semibold text-gray-900">Collect</h1>
   </header>
 
   <main class="max-w-4xl mx-auto px-6 py-8 space-y-6">
 
-    <!-- ── Phase: input ─────────────────────────────────────────────────── -->
-    <section id="phase-input" class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-      <h2 class="font-medium text-gray-900 mb-4">Enter your saved list name</h2>
+    <!-- ── Idle: start form ──────────────────────────────────────────────── -->
+    <section id="section-idle" class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+      <h2 class="font-medium text-gray-900 mb-4">Start a new collection</h2>
       <form id="collect-form" class="flex gap-3">
         <input
           id="list-name"
@@ -52,13 +51,28 @@
           Start Collection
         </button>
       </form>
+
+      <!-- ── Inline error banner ───────────────────────────────────────────── -->
+      <div id="error-banner" class="hidden mt-3 flex items-start gap-3 rounded-lg bg-red-50 border border-red-200 px-4 py-3">
+        <svg class="w-4 h-4 text-red-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p id="error-message" class="text-sm text-red-700 flex-1"></p>
+        <button id="error-dismiss-btn" class="text-red-400 hover:text-red-600 transition-colors shrink-0" aria-label="Dismiss">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
       <p class="text-xs text-gray-400 mt-3">
         A browser window will open. Sign into Google Maps if prompted, then
         the tool will navigate and collect automatically.
       </p>
     </section>
 
-    <!-- ── Past collections ─────────────────────────────────────────────────── -->
+    <!-- ── Past collections ──────────────────────────────────────────────── -->
     <section id="past-collections" class="hidden bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
         <h3 class="text-sm font-medium text-gray-700">Past collections</h3>
@@ -66,8 +80,8 @@
       <ul id="past-collections-list" class="divide-y divide-gray-100 text-sm"></ul>
     </section>
 
-    <!-- ── Phase: collecting ─────────────────────────────────────────────── -->
-    <section id="phase-collecting" class="hidden bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+    <!-- ── Running: live progress ────────────────────────────────────────── -->
+    <section id="section-running" class="hidden bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
       <div class="flex items-center gap-3 mb-4">
         <div class="spinner"></div>
         <p id="status-message" class="text-sm text-gray-600">Starting…</p>
@@ -75,137 +89,49 @@
       <div id="live-places" class="space-y-1 max-h-64 overflow-y-auto"></div>
     </section>
 
-    <!-- ── Phase: review ─────────────────────────────────────────────────── -->
-    <section id="phase-review" class="hidden space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="font-medium text-gray-900">
-          Review places in <span id="review-list-name" class="text-blue-600"></span>
-          <span id="review-count" class="ml-2 text-sm text-gray-400"></span>
-        </h2>
-        <div class="flex gap-2">
-          <button
-            id="new-collection-btn"
-            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50 transition-colors"
-          >
-            New Collection
-          </button>
-          <button
-            id="confirm-btn"
-            class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors"
-          >
-            Save Actions
-          </button>
-        </div>
-      </div>
-
-      <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th class="text-left px-4 py-3 font-medium text-gray-600">Place</th>
-              <th class="text-left px-4 py-3 font-medium text-gray-600 w-36">Action</th>
-              <th class="text-left px-4 py-3 font-medium text-gray-600 w-48">Move to list</th>
-            </tr>
-          </thead>
-          <tbody id="places-table" class="divide-y divide-gray-100"></tbody>
-        </table>
-      </div>
-
-      <div class="flex justify-end">
-        <button
-          id="confirm-btn-bottom"
-          class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors"
-        >
-          Save Actions
-        </button>
-      </div>
-    </section>
-
-    <!-- ── Phase: done ───────────────────────────────────────────────────── -->
-    <section id="phase-done" class="hidden bg-white rounded-xl border border-green-200 p-6 shadow-sm">
-      <div class="flex items-center gap-3 mb-3">
-        <div class="rounded-full bg-green-100 p-1">
-          <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-          </svg>
-        </div>
-        <h2 class="font-medium text-green-900">Actions saved</h2>
-      </div>
-      <p class="text-sm text-gray-600 mb-1">Action file created:</p>
-      <code id="action-file-path" class="text-xs bg-gray-100 text-gray-700 px-3 py-2 rounded block break-all"></code>
-      <div class="mt-4 flex gap-3">
-        <a href="/update"
-          class="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700 transition-colors">
-          Go to Update →
-        </a>
-        <button id="reset-btn"
-          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50 transition-colors">
-          Start Over
-        </button>
-      </div>
-    </section>
-
-    <!-- ── Phase: error ──────────────────────────────────────────────────── -->
-    <section id="phase-error" class="hidden bg-white rounded-xl border border-red-200 p-6 shadow-sm">
-      <div class="flex items-center gap-3 mb-2">
-        <div class="rounded-full bg-red-100 p-1">
-          <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </div>
-        <h2 class="font-medium text-red-900">Error</h2>
-      </div>
-      <p id="error-message" class="text-sm text-red-700 mb-4"></p>
-      <button id="error-reset-btn"
-        class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50 transition-colors">
-        Try Again
-      </button>
-    </section>
-
   </main>
 
   <script>
-    // ── State & SSE ─────────────────────────────────────────────────────────
-    let appState = null;
-    let collectedPlaces = [];
+    // collectingThisSession tracks whether THIS page load started a collection.
+    // We only auto-redirect to the collection page for collections we initiated —
+    // not for a stale 'done' state left over from a previous session.
+    let collectingThisSession = false;
 
-    const sections = {
-      idle: 'phase-input',
-      collecting: 'phase-collecting',
-      review: 'phase-review',
-      confirming: 'phase-collecting',
-      done: 'phase-done',
-      error: 'phase-error',
-    };
+    function showSection(id) {
+      ['section-idle', 'section-running'].forEach(s => {
+        document.getElementById(s).classList.toggle('hidden', s !== id);
+      });
+      document.getElementById('past-collections').classList.toggle('hidden', id !== 'section-idle');
+    }
 
-    function showOnly(id) {
-      ['phase-input', 'phase-collecting', 'phase-review', 'phase-done', 'phase-error']
-        .forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
-      document.getElementById('past-collections').classList.toggle('hidden', id !== 'phase-input');
+    function showError(message) {
+      document.getElementById('error-message').textContent = message;
+      document.getElementById('error-banner').classList.remove('hidden');
+    }
+
+    function hideError() {
+      document.getElementById('error-banner').classList.add('hidden');
     }
 
     function applyState(state) {
-      appState = state;
       document.getElementById('dry-run-banner').classList.toggle('hidden', !state.dryRun);
-      const sectionId = sections[state.phase] || 'phase-input';
-      showOnly(sectionId);
+      const { collect } = state;
 
-      if (state.message) {
-        document.getElementById('status-message').textContent = state.message;
-      }
-
-      if (state.phase === 'review' && state.places) {
-        collectedPlaces = state.places;
-        renderReviewTable(state.places, state.listName);
-      }
-
-      if (state.phase === 'done' && state.actionFile) {
-        document.getElementById('action-file-path').textContent = state.actionFile;
-      }
-
-      if (state.phase === 'error' && state.message) {
-        document.getElementById('error-message').textContent = state.message;
+      if (collect.status === 'running') {
+        hideError();
+        showSection('section-running');
+        if (collect.message) document.getElementById('status-message').textContent = collect.message;
+      } else if (collect.status === 'done' && collectingThisSession && collect.outputFile) {
+        window.location.href = '/collections/' + encodeURIComponent(collect.outputFile);
+      } else if (collect.status === 'error') {
+        collectingThisSession = false;
+        showSection('section-idle');
+        loadPastCollections();
+        showError(collect.message || 'Unknown error');
+      } else {
+        hideError();
+        showSection('section-idle');
+        loadPastCollections();
       }
     }
 
@@ -221,13 +147,15 @@
       container.scrollTop = container.scrollHeight;
     });
 
-    // ── Collect form ────────────────────────────────────────────────────────
+    // ── Collect form ─────────────────────────────────────────────────────────
     document.getElementById('collect-form').addEventListener('submit', async e => {
       e.preventDefault();
       const listName = document.getElementById('list-name').value.trim();
       if (!listName) return;
 
+      hideError();
       document.getElementById('live-places').innerHTML = '';
+      collectingThisSession = true;
 
       const res = await fetch('/api/collect/start', {
         method: 'POST',
@@ -236,116 +164,17 @@
       });
 
       if (!res.ok) {
+        collectingThisSession = false;
         const err = await res.json();
-        alert(err.error || 'Failed to start collection');
+        showError(err.error || 'Failed to start collection');
       }
     });
 
-    // ── Review table ────────────────────────────────────────────────────────
-    function renderReviewTable(places, listName) {
-      document.getElementById('review-list-name').textContent = listName || '';
-      document.getElementById('review-count').textContent = `(${places.length} places)`;
-
-      const tbody = document.getElementById('places-table');
-      tbody.innerHTML = '';
-
-      places.forEach((place, i) => {
-        const tr = document.createElement('tr');
-        tr.className = 'hover:bg-gray-50';
-        tr.innerHTML = `
-          <td class="px-4 py-3">
-            ${place.link
-              ? `<a href="${place.link}" target="_blank" rel="noopener"
-                  class="text-blue-600 hover:underline font-medium">${escHtml(place.name)}</a>`
-              : `<span class="font-medium text-gray-900">${escHtml(place.name)}</span>`
-            }
-          </td>
-          <td class="px-4 py-3">
-            <select data-idx="${i}" class="action-select rounded border border-gray-300 text-xs px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <option value="keep">Keep</option>
-              <option value="remove">Remove</option>
-              <option value="move">Move to…</option>
-            </select>
-          </td>
-          <td class="px-4 py-3">
-            <input
-              data-idx="${i}"
-              class="target-input hidden rounded border border-gray-300 text-xs px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder="Target list name"
-              type="text"
-            />
-          </td>
-        `;
-        tbody.appendChild(tr);
-      });
-
-      tbody.querySelectorAll('.action-select').forEach(sel => {
-        sel.addEventListener('change', () => {
-          const idx = sel.dataset.idx;
-          const input = tbody.querySelector(`.target-input[data-idx="${idx}"]`);
-          input.classList.toggle('hidden', sel.value !== 'move');
-          if (sel.value === 'move') input.focus();
-        });
-      });
-    }
-
-    // ── Confirm ─────────────────────────────────────────────────────────────
-    async function confirmActions() {
-      const tbody = document.getElementById('places-table');
-      const actions = [];
-
-      tbody.querySelectorAll('.action-select').forEach(sel => {
-        const idx = parseInt(sel.dataset.idx, 10);
-        const place = collectedPlaces[idx];
-        if (sel.value === 'keep') return;
-
-        const action = { name: place.name, link: place.link, action: sel.value };
-
-        if (sel.value === 'move') {
-          const input = tbody.querySelector(`.target-input[data-idx="${idx}"]`);
-          const targetList = input.value.trim();
-          if (!targetList) {
-            alert(`Please enter a target list name for "${place.name}"`);
-            input.focus();
-            throw new Error('Missing target list');
-          }
-          action.targetList = targetList;
-        }
-
-        actions.push(action);
-      });
-
-      const res = await fetch('/api/collect/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actions }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        alert(err.error || 'Failed to save actions');
-      }
-    }
-
-    document.getElementById('confirm-btn').addEventListener('click', () => {
-      confirmActions().catch(() => {});
+    // ── Error dismiss ────────────────────────────────────────────────────────
+    document.getElementById('error-dismiss-btn').addEventListener('click', async () => {
+      await fetch('/api/collect/reset', { method: 'POST' });
+      hideError();
     });
-    document.getElementById('confirm-btn-bottom').addEventListener('click', () => {
-      confirmActions().catch(() => {});
-    });
-
-    // ── Reset ────────────────────────────────────────────────────────────────
-    async function reset() {
-      await fetch('/api/reset', { method: 'POST' });
-      collectedPlaces = [];
-      document.getElementById('list-name').value = '';
-      document.getElementById('live-places').innerHTML = '';
-      loadPastCollections();
-    }
-
-    document.getElementById('reset-btn').addEventListener('click', reset);
-    document.getElementById('error-reset-btn').addEventListener('click', reset);
-    document.getElementById('new-collection-btn').addEventListener('click', reset);
 
     // ── Past collections ─────────────────────────────────────────────────────
     async function loadPastCollections() {
@@ -364,24 +193,12 @@
         const li = document.createElement('li');
         li.className = 'flex items-center justify-between px-4 py-3';
         li.innerHTML = `
-          <span class="text-gray-600 font-mono text-xs truncate mr-4">${escHtml(fileName)}</span>
-          <div class="flex gap-3 shrink-0">
-            <button class="load-btn text-blue-600 hover:text-blue-800 text-xs font-medium" data-file="${escHtml(fileName)}">Load</button>
-            <button class="delete-btn text-red-500 hover:text-red-700 text-xs font-medium" data-file="${escHtml(fileName)}">Delete</button>
-          </div>
+          <a href="/collections/${encodeURIComponent(fileName)}"
+             class="text-blue-600 hover:underline font-mono text-xs truncate mr-4">${escHtml(fileName)}</a>
+          <button class="delete-btn text-red-500 hover:text-red-700 text-xs font-medium shrink-0"
+                  data-file="${escHtml(fileName)}">Delete</button>
         `;
         list.appendChild(li);
-      });
-
-      list.querySelectorAll('.load-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          await fetch('/api/collect/load', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fileName: btn.dataset.file }),
-          });
-          // State update arrives via SSE and triggers applyState → review phase
-        });
       });
 
       list.querySelectorAll('.delete-btn').forEach(btn => {
@@ -397,7 +214,6 @@
 
     loadPastCollections();
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
     function escHtml(str) {
       return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }

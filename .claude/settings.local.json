@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bunx playwright *)",
+      "Bash(bunx tsc *)"
+    ]
+  }
+}

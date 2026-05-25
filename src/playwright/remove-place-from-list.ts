@@ -21,12 +21,20 @@ import { type Page } from 'playwright';
 export async function removePlaceFromList(page: Page, placeName: string): Promise<Page> {
   // UNCERTAIN: button label may include a dynamic star-rating suffix — use partial match.
   const placeBtn = page.getByRole('button', { name: placeName, exact: false });
-  await placeBtn.waitFor({ state: 'visible', timeout: 15_000 });
+  try {
+    await placeBtn.waitFor({ state: 'visible', timeout: 15_000 });
+  } catch {
+    throw new Error(`Place button for "${placeName}" not visible in the list`);
+  }
   await placeBtn.hover();
 
   // UNCERTAIN: "Delete" label may vary by locale or Maps update; could also be "Remove".
   const deleteBtn = page.getByRole('button', { name: /^Delete$|^Remove$/ });
-  await deleteBtn.waitFor({ state: 'visible', timeout: 10_000 });
+  try {
+    await deleteBtn.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch {
+    throw new Error(`Delete/Remove button did not appear after hovering "${placeName}"`);
+  }
   await deleteBtn.click();
 
   return page;

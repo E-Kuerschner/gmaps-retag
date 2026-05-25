@@ -1,9 +1,10 @@
 export interface Place {
   name: string;
-  link: string;
+  note?: string | null;
 }
 
-export interface PlaceAction extends Place {
+export interface PlaceAction {
+  name: string;
   action: 'remove' | 'move';
   targetList?: string;
 }
@@ -16,33 +17,33 @@ export interface CollectedList {
 
 export interface ActionFile {
   listName: string;
-  sourceFile: string;
+  collectionFile: string;
   timestamp: string;
   actions: PlaceAction[];
 }
 
 export interface ErrorEntry {
   location: string;
+  step?: string;
   problem: string;
   timestamp: string;
 }
 
-export type AppPhase =
-  | 'idle'
-  | 'collecting'
-  | 'review'
-  | 'confirming'
-  | 'updating'
-  | 'done'
-  | 'error';
-
-export interface AppState {
-  phase: AppPhase;
-  dryRun?: boolean;
+export interface CollectWorkflow {
+  status: 'idle' | 'running' | 'done' | 'error';
   listName?: string;
-  places?: Place[];
   outputFile?: string;
-  actionFile?: string;
+  message?: string;
+}
+
+export interface UpdateWorkflow {
+  status: 'idle' | 'running' | 'done' | 'error';
   message?: string;
   progress?: { current: number; total: number };
+}
+
+export interface AppState {
+  dryRun: boolean;
+  collect: CollectWorkflow;
+  update: UpdateWorkflow;
 }

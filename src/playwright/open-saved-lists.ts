@@ -25,7 +25,11 @@ export async function openSavedLists(context: BrowserContext): Promise<Page> {
     .locator('[jsaction="navigationrail.saved"], button:has-text("Saved")')
     .first();
 
-  await savedBtn.waitFor({ state: 'visible', timeout: 60_000 });
+  try {
+    await savedBtn.waitFor({ state: 'visible', timeout: 60_000 });
+  } catch {
+    throw new Error("The 'Saved' button was not found on Google Maps — you may not be logged in");
+  }
   await savedBtn.click();
 
   // UNCERTAIN: "Lists" tab label may differ by locale.

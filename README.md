@@ -27,19 +27,33 @@ bun run start:dry    # production + dry-run
 
 Open **http://localhost:3000** in your browser.
 
+### Page hierarchy
+
+```
+/                         Home
+└── /collect              Collect — start a new collection or browse past ones
+    └── /collections/:f   Collection — review places, assign actions, run update
+```
+
+Each collection is a permanent URL. Browser back and forward work naturally throughout.
+
 ### Workflow
 
-**1 · Collect & Review**
+**Step 1 — Collect** (`/collect`)
 
-Enter the name of a saved list. A browser window opens and navigates to Google Maps. Once the places are collected they appear in a review table where each one can be marked _keep_, _remove_, or _move to another list_. Confirming writes an actions file to `output/`.
+Enter the name of a Google Maps saved list and click _Start Collection_. A browser window opens, navigates to Google Maps, scrolls the list to load all places, then clicks through each one to scrape its name, address, and any saved note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
 
-**2 · Update**
+**Step 2 — Review** (`/collections/:fileName`)
 
-Select an actions file from step 1. The browser navigates back to Maps and applies every marked change automatically.
+The collection page shows every place with its address and note. For each place choose _Keep_, _Remove_, or _Move to…_ (and type a target list name). Places you leave as _Keep_ are ignored by the update.
+
+**Step 3 — Update** (same page)
+
+Click _Start Update_. The browser navigates back to Maps and applies every marked change. Progress is shown inline; individual failures are logged without stopping the rest of the run. The actions file is written to `output/` for reference.
 
 ### Dry-run mode
 
-Start the server with `DRY_RUN=true` (or use the `dev:dry` / `start:dry` scripts). The browser still navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. Use this to validate and tune Playwright selectors without touching your real data. An amber banner appears on all UI pages and the Update page logs what _would_ have been applied.
+Start the server with `DRY_RUN=true` (or use the `dev:dry` / `start:dry` scripts). The browser navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. An amber banner appears on all pages and the collection page logs what _would_ have been applied. Use this to validate selectors before touching real data.
 
 ## Output files
 
@@ -47,9 +61,9 @@ Everything is written to `output/` (git-ignored except `.gitkeep`):
 
 | File pattern | Contents |
 |---|---|
-| `{list}_{ts}.json` | Raw collected places — name and Maps link |
-| `{list}_{ts}_actions.json` | User-confirmed actions consumed by the Update flow |
-| `errors_{ts}.json` | Per-item failures from either flow |
+| `{list}_{ts}.json` | Scraped collection — places with name, address, and note |
+| `{list}_{ts}_actions.json` | Actions confirmed on the collection page (created when update starts) |
+| `errors_{ts}.json` | Per-item failures from either workflow |
 
 ---
 
@@ -61,75 +75,121 @@ Everything is written to `output/` (git-ignored except `.gitkeep`):
 ┌──────────────────────────────────────────────────────────────────┐
 │                          Bun process                             │
 │                                                                  │
-│  ┌─────────────────┐   setState()    ┌──────────────────────┐   │
-│  │   Playwright     │ ──────────────▶ │  AppState            │   │
-│  │  collect.ts /   │                 │  src/state.ts        │   │
-│  │  update.ts      │                 └──────────┬───────────┘   │
-│  └─────────────────┘                            │ broadcast()   │
-│                                                 ▼               │
-│  ┌─────────────────┐   fetch POST    ┌──────────────────────┐   │
-│  │  Browser UI     │ ──────────────▶ │  Bun.serve()         │   │
-│  │  (HTML pages)   │                 │  src/server.ts       │   │
-│  │                 │ ◀── SSE stream ─┘                      │   │
-│  └─────────────────┘                                        │   │
+│  ┌──────────────────┐  setCollectState()  ┌──────────────────┐  │
+│  │  collect.ts      │ ──────────────────▶ │                  │  │
+│  │                  │                     │  AppState        │  │
+│  │  update.ts       │ ──────────────────▶ │  src/state.ts    │  │
+│  └──────────────────┘  setUpdateState()   │                  │  │
+│                                           └────────┬─────────┘  │
+│                                                    │ broadcast() │
+│                                                    ▼            │
+│  ┌──────────────────┐   fetch POST        ┌──────────────────┐  │
+│  │  Browser UI      │ ──────────────────▶ │  Bun.serve()     │  │
+│  │  (HTML pages)    │                     │  src/server.ts   │  │
+│  │                  │ ◀─── SSE stream ─── │                  │  │
+│  └──────────────────┘                     └──────────────────┘  │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-User actions (submitting a list name, confirming actions) travel from the browser UI to the server as plain `fetch` POST calls. Progress and state changes travel back through a persistent SSE stream.
+User actions travel from the browser to the server as plain `fetch` POST calls. Progress and state changes travel back through a persistent SSE stream on `/api/events`.
 
-### State management
+### State model
 
-A single `AppState` object lives as a module-level variable in `src/state.ts`. Every mutation goes through `setState(partial)`, which shallow-merges the update and immediately broadcasts the new state to all connected clients:
+State is split into two independent workflows. Each page subscribes to the part it cares about:
 
 ```typescript
-// src/state.ts (simplified)
-let state: AppState = { phase: 'idle', dryRun: isDryRun };
-
-export function setState(update: Partial<AppState>) {
-  state = { ...state, ...update };
-  broadcast('state', state);
+interface AppState {
+  dryRun: boolean;
+  collect: CollectWorkflow;   // watched by /collect
+  update:  UpdateWorkflow;    // watched by /collections/:f
 }
 ```
 
-`AppState` carries a discriminated `phase` field that drives which UI section is shown on each page:
+Each workflow follows the same simple lifecycle:
 
 ```
-idle → collecting → review → confirming → done
-                                       ↘ error
-idle → updating ──────────────────────→ done
-                                       ↘ error
+collect:   idle ──▶ running ──▶ done
+                          └──▶ error
+
+update:    idle ──▶ running ──▶ done
+                          └──▶ error
+```
+
+Mutations go through `setCollectState(partial)` or `setUpdateState(partial)`, which shallow-merge the update into the relevant workflow slice and immediately broadcast the new full state to all connected SSE clients.
+
+The two workflows are independent — the collect and update Playwright processes are completely separate runs. Starting a second run while one is active is rejected with 409.
+
+### Routing
+
+```
+GET  /                           → index.html
+GET  /collect                    → collect.html
+GET  /collections/:fileName      → collection.html
+
+GET  /api/events                 → SSE stream (broadcasts AppState on every mutation)
+GET  /api/state                  → current AppState snapshot
+GET  /api/collect-files          → list of collection JSON files in output/
+GET  /api/collections/:fileName  → contents of a specific collection JSON
+DEL  /api/collect-files/:name    → delete a collection file
+
+POST /api/collect/start          → { listName } — launch collect workflow
+POST /api/collect/reset          → reset collect workflow to idle
+
+POST /api/update/start           → { collectionFile, actions[] } — write action file, launch update workflow
+POST /api/update/reset           → reset update workflow to idle
+
+POST /api/reset                  → reset both workflows to idle
+POST /api/browser/close          → close the persistent Playwright browser
 ```
 
 ### SSE communication
 
-The server keeps a `Set` of active `ReadableStreamDefaultController` instances — one per connected browser tab. `broadcast()` encodes the payload and enqueues it on every controller in the set:
+A single `/api/events` endpoint serves all pages. The server keeps a `Set` of active `ReadableStreamDefaultController` instances — one per connected tab. On connect, the current `AppState` is sent immediately so the page renders without waiting for the next mutation.
 
 ```
-Browser tab                        Server (Bun.serve)
-    │                                      │
-    │   GET /api/events                    │
-    │ ───────────────────────────────────▶ │ adds controller to Set,
-    │ ◀── event: state (current) ───────── │ sends snapshot immediately
-    │                                      │
-    │            [Playwright runs in background]
-    │                                      │
-    │ ◀── event: place ─────────────────── │ each scraped place
-    │ ◀── event: progress ──────────────── │ per-item update progress
-    │ ◀── event: error ─────────────────── │ per-item failure
-    │ ◀── event: dryRunAction ──────────── │ dry-run: what would apply
-    │ ◀── event: state (phase=done) ─────── │ terminal state
-    │                                      │
-    │   POST /api/collect/start            │
-    │ ───────────────────────────────────▶ │ spawns Playwright fire-and-forget,
-    │ ◀── 200 { ok: true } ─────────────── │ returns immediately
+Browser tab                         Server
+    │                                  │
+    │   GET /api/events                │
+    │ ───────────────────────────────▶ │  adds controller to Set
+    │ ◀── event: state (snapshot) ──── │  sends current state immediately
+    │                                  │
+    │         [Playwright runs in background]
+    │                                  │
+    │ ◀── event: place ──────────────── │  each scraped place (collect)
+    │ ◀── event: progress ───────────── │  per-item progress (update)
+    │ ◀── event: error ──────────────── │  per-item failure (update)
+    │ ◀── event: dryRunAction ────────── │  dry-run log entry (update)
+    │ ◀── event: state (done/error) ──── │  terminal state
 ```
 
-Playwright runs fire-and-forget from the API handler. The HTTP response returns as soon as the browser is launched; all subsequent progress is pushed back over the SSE channel.
+Playwright runs fire-and-forget from inside the API handler. The HTTP response returns as soon as the workflow is launched; all subsequent progress arrives over SSE.
+
+### Playwright modules
+
+Navigation to Google Maps is broken into composable, reusable steps in `src/playwright/`:
+
+| Module | Signature | What it does |
+|---|---|---|
+| `browser.ts` | `getBrowserContext()` | Creates/reuses the persistent Chromium profile in `browser-data/` |
+| `open-saved-lists.ts` | `(context) → Page` | Navigates to Maps and opens the saved-lists panel |
+| `open-list-by-name.ts` | `(page, listName) → Page` | Clicks a named list in the panel |
+| `get-place-details.ts` | `(page, placeName) → PlaceDetails` | Clicks a place, scrapes name/address/note |
+| `remove-place-from-list.ts` | `(page, placeName) → Page` | Hovers to reveal the delete button and removes the place |
+| `move-place-to-list.ts` | `(page, placeName, src, dest) → Page` | Moves a place between lists via the Saved dropdown |
+| `collect.ts` | `(context, listName) → string` | Full collect workflow — navigate, scroll, enrich, write JSON |
+| `update.ts` | `(context, actionFilePath) → void` | Full update workflow — navigate, apply each action |
+
+`collect.ts` and `update.ts` orchestrate the atomic modules above. The smaller modules are independently usable in scripts or future flows.
+
+### Selector fragility
+
+Google Maps uses dynamically generated CSS class names. All Playwright selectors prefer `aria-label`, `role`, and text-content attributes. Selectors that rely on internal class names or attributes are annotated:
+
+- `// BRITTLE:` — known-fragile; will break when Maps deploys a new class hash
+- `// UNCERTAIN:` — selector works in testing but the attribute may change by locale or Maps version
+
+These annotations are the first things to check when a live Maps session breaks a flow.
 
 ### Browser persistence
 
-Playwright launches a **persistent browser context** stored in `browser-data/` (git-ignored). This preserves the Google session between server restarts so the user only needs to log in once.
-
-### Playwright selector notes
-
-Google Maps uses dynamically generated CSS class names, so the Playwright code targets `aria-label`, `role`, and text-content selectors wherever possible. Every selector that is uncertain is annotated with a `// UNCERTAIN:` comment explaining the assumption and suggesting fallback approaches — these are the first things to check when testing against a live Maps session.
+Playwright launches a **persistent browser context** stored in `browser-data/` (git-ignored). This preserves the Google session between server restarts so login is only required once.

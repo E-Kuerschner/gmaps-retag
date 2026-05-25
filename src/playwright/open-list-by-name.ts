@@ -17,7 +17,11 @@ import { type Page } from 'playwright';
 export async function openListByName(page: Page, listName: string): Promise<Page> {
   // UNCERTAIN: button label includes a dynamic place-count suffix (e.g. "· 4 places") — use partial match.
   const listBtn = page.getByRole('button', { name: listName, exact: false });
-  await listBtn.waitFor({ state: 'visible', timeout: 15_000 });
+  try {
+    await listBtn.waitFor({ state: 'visible', timeout: 15_000 });
+  } catch {
+    throw new Error(`List "${listName}" not found in the saved lists panel`);
+  }
   await listBtn.click();
   return page;
 }

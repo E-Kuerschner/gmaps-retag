@@ -1,8 +1,10 @@
-import { type BrowserContext } from 'playwright';
+import { type BrowserContext, type Page } from 'playwright';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import type { Place, CollectedList, ErrorEntry } from '../types.ts';
-import { setState, broadcast } from '../state.ts';
+import { setCollectState, broadcast } from '../state.ts';
+import { openSavedLists } from './open-saved-lists.ts';
+import { openListByName } from './open-list-by-name.ts';
 
 const OUTPUT_DIR = join(process.cwd(), 'output');
 
@@ -27,84 +29,31 @@ export async function collectList(
 ): Promise<string> {
   mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  const page = await context.newPage();
+  let page: Page | undefined;
   const errors: ErrorEntry[] = [];
   const places: Place[] = [];
   const ts = timestamp();
 
   try {
-    setState({ phase: 'collecting', listName, places: [], message: 'Opening Google Maps…' });
+    setCollectState({ status: 'running', listName, message: 'Opening Google Maps…' });
 
-    // UNCERTAIN: Google Maps may redirect or require login. Using networkidle
-    // can time out if ads/analytics never settle — domcontentloaded is safer.
-    await page.goto('https://www.google.com/maps', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-
-    // Give the user a moment to log in if the session isn't already authenticated.
-    setState({ message: 'Waiting for Google Maps to load. Please log in if prompted.' });
-
-    // Selector for the "Saved" navigation rail button.
-    // Primary: jsaction attribute is a stable internal identifier.
-    // Fallback: button containing the text "Saved".
-    // Does NOT have aria-label or data-tooltip in the current Maps UI.
-    // BRITTLE: jsaction values are internal to Google's event framework and can
-    // be renamed in any Maps deploy. If this breaks, rely on the text fallback
-    // or inspect the nav rail for a new jsaction value.
-    const savedBtn = page
-      .locator('[jsaction="navigationrail.saved"], button:has-text("Saved")')
-      .first();
-
+    setCollectState({ message: 'Waiting for Google Maps to load. Please log in if prompted.' });
     try {
-      await savedBtn.waitFor({ state: 'visible', timeout: 60_000 });
+      page = await openSavedLists(context);
     } catch {
       throw new Error(
         'Could not find the "Saved" button. Make sure you are logged into Google Maps.',
       );
     }
 
-    await savedBtn.click();
-    setState({ message: 'Navigating to Lists…' });
-
-    // UNCERTAIN: Google Maps shows tabs labelled "Favourites", "Starred places",
-    // "Want to go", "Travelled", and custom list names. The "Lists" tab that
-    // shows *all* user-created lists may be labelled differently in some locales.
-    // Try tab text first, fall back to role=tab selector.
-    const listsTab = page.locator('button[role="tab"]:has-text("Lists"), [aria-label="Lists"]').first();
+    setCollectState({ message: `Looking for list "${listName}"…` });
     try {
-      await listsTab.waitFor({ state: 'visible', timeout: 10_000 });
-      await listsTab.click();
+      await openListByName(page, listName);
     } catch {
-      // If there is no "Lists" tab the UI may show lists inline — carry on.
-      console.warn('[collect] Could not find "Lists" tab; assuming lists are already visible.');
-    }
-
-    setState({ message: `Looking for list "${listName}"…` });
-    await page.waitForTimeout(1_500);
-
-    // UNCERTAIN: List cards in the saved section. Google Maps renders them as
-    // clickable divs/buttons. Trying aria-label match first, then text content.
-    const byAria = page.locator(`[aria-label="${listName}"]`).first();
-    const byText = page.locator(`text="${listName}"`).first();
-
-    let clicked = false;
-    try {
-      await byAria.waitFor({ state: 'visible', timeout: 5_000 });
-      await byAria.click();
-      clicked = true;
-    } catch { /* try byText next */ }
-
-    if (!clicked) {
-      try {
-        await byText.waitFor({ state: 'visible', timeout: 5_000 });
-        await byText.click();
-        clicked = true;
-      } catch { /* failed */ }
-    }
-
-    if (!clicked) {
       throw new Error(`List "${listName}" was not found in your saved lists.`);
     }
 
-    setState({ message: `Opened list "${listName}". Collecting places…` });
+    setCollectState({ message: `Opened list "${listName}". Scrolling to load all places…` });
     await page.waitForTimeout(2_000);
 
     // Scrollable container for place items.
@@ -113,65 +62,67 @@ export async function collectList(
     // stops working, inspect the container element and update this selector.
     const feed = page.locator('div.DxyBCb').first();
 
-    // Scroll to the absolute bottom, wait for lazy-loaded items to render, then
-    // check if the scrollHeight grew (meaning new content appeared). Repeat until
-    // we are truly at the bottom.
-    setState({ message: `Opened list "${listName}". Scrolling to load all places…` });
     while (true) {
       try {
         await feed.evaluate((el) => { el.scrollTo(0, el.scrollHeight); });
       } catch {
-        // Feed element not found — fall back to pressing End and assume one pass is enough.
         await page.keyboard.press('End');
         break;
       }
-      await page.waitForTimeout(800); // let lazy-loaded items render
+      await page.waitForTimeout(800);
       const atBottom = await feed.evaluate(
         (el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1,
       ).catch(() => true);
       if (atBottom) break;
     }
 
-    // Collect all place items now that the full list is loaded.
-    // BRITTLE: XiKgde is a minified/obfuscated class name shared by both the
-    // scroll container (DxyBCb) and individual items. :not(.DxyBCb) excludes the
-    // container. If count comes back 0, inspect a place card and update this selector.
-    const items = page.locator('div.XiKgde:not(.DxyBCb)');
+    // Collect all place cards now that the full list is loaded.
+    // Place cards are <button> elements inside the scroll container that wrap the place name,
+    // address, and thumbnail. Scoping inside feed avoids matching buttons elsewhere on the page.
+    // BRITTLE: fontHeadlineSmall is a Maps typography utility class used for the place name;
+    // it is less likely to change than obfuscated hash classes but is still not a semantic attr.
+    // If count comes back 0, inspect a place card and confirm it still contains .fontHeadlineSmall.
+    const items = feed.locator('button:has(.fontHeadlineSmall)');
     const total = await items.count();
-
-    setState({ message: `Found ${total} place(s). Extracting details…` });
+    setCollectState({ message: `Found ${total} place(s). Reading names and notes…` });
 
     for (let i = 0; i < total; i++) {
       const item = items.nth(i);
       try {
-        // Place name is in .fontHeadlineSmall within the item card.
-        // BRITTLE: fontHeadlineSmall is a Maps utility class — less likely to
-        // change than a random hash class, but still not a semantic attribute.
-        // Fallback: try 'h3' or '[aria-label]' on the clickable button within the item.
+        // BRITTLE: fontHeadlineSmall is a Maps utility class — less likely to change
+        // than a random hash class, but not a semantic attribute.
         const nameEl = item.locator('.fontHeadlineSmall').first();
         const name = (await nameEl.textContent())?.trim();
-        if (!name) {
-          throw new Error('Could not read place name');
+        if (!name) throw new Error('element found but text content was empty');
+
+        // Maps renders one note textarea per card in list order, scoped inside the feed.
+        // Using nth(i) off the feed matches the same positional card as the name button above.
+        // Not all places have notes — treat any failure or empty value as no note.
+        // UNCERTAIN: aria-label "Note" may vary by locale.
+        let note: string | null = null;
+        try {
+          const noteArea = feed.locator('textarea[aria-label="Note"]').nth(i);
+          const text = (await noteArea.inputValue({ timeout: 1_000 })).trim();
+          note = text.length > 0 ? text : null;
+        } catch {
+          // Textarea absent or inaccessible — no note.
         }
 
-        // The update flow finds places by name within the open list and does not
-        // navigate to individual place URLs, so link is not needed here.
-        const link = '';
-
-        places.push({ name, link });
-        broadcast('place', { name, link });
-        setState({ message: `Collected ${places.length} / ${total}: ${name}` });
-      } catch (err) {
+        const place: Place = { name, note };
+        places.push(place);
+        broadcast('place', place);
+      } catch {
         errors.push({
-          location: `Item ${i} in list "${listName}"`,
-          problem: err instanceof Error ? err.message : String(err),
+          location: `Item ${i + 1} of ${total} in list "${listName}"`,
+          step: 'read name',
+          problem: `Name element (.fontHeadlineSmall) not found inside place button at index ${i} — the button selector may have drifted or the card structure changed`,
           timestamp: new Date().toISOString(),
         });
       }
     }
 
-    // Persist the collected data.
-    const outputFile = join(OUTPUT_DIR, `${safeFileName(listName)}_${ts}.json`);
+    const outputFileName = `${safeFileName(listName)}_${ts}.json`;
+    const outputFile = join(OUTPUT_DIR, outputFileName);
     const data: CollectedList = {
       listName,
       timestamp: new Date().toISOString(),
@@ -180,15 +131,15 @@ export async function collectList(
     await Bun.write(outputFile, JSON.stringify(data, null, 2));
     await saveErrors(errors, ts);
 
-    setState({ phase: 'review', places, outputFile, message: `Collected ${places.length} place(s).` });
+    setCollectState({ status: 'done', outputFile: outputFileName, message: `Collected ${places.length} place(s).` });
     return outputFile;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     errors.push({ location: `list "${listName}"`, problem: message, timestamp: new Date().toISOString() });
     await saveErrors(errors, ts);
-    setState({ phase: 'error', message });
+    setCollectState({ status: 'error', message });
     throw err;
   } finally {
-    await page.close();
+    await page?.close();
   }
 }

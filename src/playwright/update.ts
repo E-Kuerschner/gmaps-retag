@@ -1,9 +1,11 @@
-import { type BrowserContext } from 'playwright';
+import { type BrowserContext, type Page } from 'playwright';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import type { ActionFile, ErrorEntry } from '../types.ts';
-import { setState, broadcast } from '../state.ts';
+import { setUpdateState, broadcast } from '../state.ts';
 import { isDryRun } from '../config.ts';
+import { openSavedLists } from './open-saved-lists.ts';
+import { openListByName } from './open-list-by-name.ts';
 
 const OUTPUT_DIR = join(process.cwd(), 'output');
 
@@ -30,60 +32,26 @@ export async function performUpdates(
   const data: ActionFile = JSON.parse(raw);
   const { listName, actions } = data;
 
-  const page = await context.newPage();
+  let page: Page | undefined;
 
   try {
-    setState({
-      phase: 'updating',
+    setUpdateState({
+      status: 'running',
       message: `${isDryRun ? '[DRY RUN] ' : ''}Opening Google Maps…`,
       progress: { current: 0, total: actions.length },
     });
 
-    await page.goto('https://www.google.com/maps', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-
-    setState({ message: 'Navigating to saved list…' });
-
-    // Navigate to the source list — same flow as collect.
-    // Selector for the "Saved" navigation rail button (no aria-label in current Maps UI).
-    // BRITTLE: jsaction values are internal to Google's event framework — see collect.ts.
-    const savedBtn = page
-      .locator('[jsaction="navigationrail.saved"], button:has-text("Saved")')
-      .first();
     try {
-      await savedBtn.waitFor({ state: 'visible', timeout: 60_000 });
+      page = await openSavedLists(context);
     } catch {
       throw new Error('Could not find the "Saved" button. Ensure you are logged in.');
     }
-    await savedBtn.click();
 
-    // UNCERTAIN: "Lists" tab selector.
-    const listsTab = page.locator('button[role="tab"]:has-text("Lists"), [aria-label="Lists"]').first();
+    setUpdateState({ message: 'Navigating to saved list…' });
+
     try {
-      await listsTab.waitFor({ state: 'visible', timeout: 10_000 });
-      await listsTab.click();
+      await openListByName(page, listName);
     } catch {
-      console.warn('[update] Could not find "Lists" tab; continuing.');
-    }
-
-    await page.waitForTimeout(1_500);
-
-    // Open the source list.
-    const listByAria = page.locator(`[aria-label="${listName}"]`).first();
-    const listByText = page.locator(`text="${listName}"`).first();
-    let clicked = false;
-    try {
-      await listByAria.waitFor({ state: 'visible', timeout: 5_000 });
-      await listByAria.click();
-      clicked = true;
-    } catch { /* try text */ }
-    if (!clicked) {
-      try {
-        await listByText.waitFor({ state: 'visible', timeout: 5_000 });
-        await listByText.click();
-        clicked = true;
-      } catch { /* failed */ }
-    }
-    if (!clicked) {
       throw new Error(`Source list "${listName}" not found.`);
     }
 
@@ -92,7 +60,7 @@ export async function performUpdates(
     for (let i = 0; i < actions.length; i++) {
       const action = actions[i];
       const label = `${isDryRun ? '[DRY RUN] ' : ''}Processing ${i + 1}/${actions.length}: ${action.name}`;
-      setState({ message: label, progress: { current: i + 1, total: actions.length } });
+      setUpdateState({ message: label, progress: { current: i + 1, total: actions.length } });
       broadcast('progress', { current: i + 1, total: actions.length, name: action.name });
 
       try {
@@ -102,7 +70,7 @@ export async function performUpdates(
         // obfuscated class). The aria-label fallback may also not match. If this stops
         // working, update to match whatever item selector collect.ts is using, scoped
         // with :has-text() to filter by name.
-        const placeCard = page
+        const placeCard = page!
           .locator(`[role="article"]:has-text("${action.name}"), [aria-label*="${action.name}"]`)
           .first();
 
@@ -113,16 +81,11 @@ export async function performUpdates(
         }
 
         await placeCard.click();
-        await page.waitForTimeout(1_500);
+        await page!.waitForTimeout(1_500);
 
-        // The place detail panel should now be open on the left.
         // UNCERTAIN: selector for the "Saved" / bookmark icon in the detail panel.
-        // In the Maps UI it is typically a button with aria-label containing "Save"
-        // or the label of the list it's already saved to.
-        // BRITTLE: data-value="Save" is an internal attribute with no semantic
-        // guarantee. The aria-label fallback is more durable but its exact wording
-        // ("Saved", "Save to list", etc.) may vary by Maps version.
-        const saveIconBtn = page
+        // BRITTLE: data-value="Save" is an internal attribute with no semantic guarantee.
+        const saveIconBtn = page!
           .locator('[aria-label*="Saved"], [data-value="Save"], button:has-text("Saved")')
           .first();
 
@@ -133,22 +96,17 @@ export async function performUpdates(
         }
 
         await saveIconBtn.click();
-        await page.waitForTimeout(1_000);
+        await page!.waitForTimeout(1_000);
 
-        // A popup/modal should appear showing the user's lists as checkboxes.
-        // UNCERTAIN: the popup container and list-item selectors. Google Maps
-        // renders these as a modal dialog with role="dialog" or a menu.
-        const popup = page.locator('[role="dialog"], [role="menu"]').last();
+        // UNCERTAIN: popup container selector.
+        const popup = page!.locator('[role="dialog"], [role="menu"]').last();
         try {
           await popup.waitFor({ state: 'visible', timeout: 6_000 });
         } catch {
           throw new Error(`Save-to-list popup did not appear for "${action.name}".`);
         }
 
-        // Resolve and validate all popup entries first — this exercises the
-        // selectors regardless of whether dry-run is active.
-        // UNCERTAIN: The list entry is likely a checkbox row labelled with
-        // the list name. aria-checked="true" means currently saved to that list.
+        // UNCERTAIN: list entry selector inside popup.
         const currentListEntry = popup
           .locator(`[aria-label*="${listName}"], :has-text("${listName}")`)
           .first();
@@ -160,7 +118,6 @@ export async function performUpdates(
 
         let targetListEntry = null;
         if (action.action === 'move') {
-          // UNCERTAIN: target list entry selector.
           targetListEntry = popup
             .locator(`[aria-label*="${action.targetList}"], :has-text("${action.targetList}")`)
             .first();
@@ -179,44 +136,38 @@ export async function performUpdates(
             : `remove from "${listName}"`;
           console.log(`[dry-run] Would ${wouldDo}: ${action.name}`);
           broadcast('dryRunAction', { name: action.name, action: action.action, targetList: action.targetList });
-          // Dismiss popup without making changes.
-          await page.keyboard.press('Escape');
+          await page!.keyboard.press('Escape');
         } else {
           await currentListEntry.click();
 
           if (action.action === 'move') {
-            await page.waitForTimeout(500);
+            await page!.waitForTimeout(500);
             await targetListEntry!.click();
           }
 
-          // Dismiss the popup — some Maps versions auto-close on selection,
-          // others require pressing Escape or clicking outside.
-          await page.waitForTimeout(800);
+          await page!.waitForTimeout(800);
           try {
-            // UNCERTAIN: close/done button inside the popup.
             const doneBtn = popup.locator('button:has-text("Done"), button:has-text("Close"), [aria-label="Close"]').first();
             const isDoneVisible = await doneBtn.isVisible();
             if (isDoneVisible) await doneBtn.click();
           } catch { /* popup may have already closed */ }
         }
 
-        await page.waitForTimeout(500);
+        await page!.waitForTimeout(500);
 
-        // Navigate back to the list view before processing the next item.
-        await page.goBack({ waitUntil: 'domcontentloaded' });
-        await page.waitForTimeout(1_000);
+        await page!.goBack({ waitUntil: 'domcontentloaded' });
+        await page!.waitForTimeout(1_000);
       } catch (err) {
         errors.push({
-          location: action.name,
+          location: `"${action.name}" in list "${listName}"`,
           problem: err instanceof Error ? err.message : String(err),
           timestamp: new Date().toISOString(),
         });
         broadcast('error', { name: action.name, problem: errors[errors.length - 1].problem });
 
-        // Recover: navigate back to the list.
         try {
-          await page.goBack({ waitUntil: 'domcontentloaded' });
-          await page.waitForTimeout(1_000);
+          await page!.goBack({ waitUntil: 'domcontentloaded' });
+          await page!.waitForTimeout(1_000);
         } catch { /* ignore navigation errors */ }
       }
     }
@@ -229,14 +180,14 @@ export async function performUpdates(
         ? `Done. ${actions.length - errors.length}/${actions.length} succeeded. Check errors_${ts}.json for failures.`
         : `All ${actions.length} update(s) completed successfully.`;
 
-    setState({ phase: 'done', message: doneMessage });
+    setUpdateState({ status: 'done', message: doneMessage });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     errors.push({ location: `list "${listName}"`, problem: message, timestamp: new Date().toISOString() });
     await saveErrors(errors, ts);
-    setState({ phase: 'error', message });
+    setUpdateState({ status: 'error', message });
     throw err;
   } finally {
-    await page.close();
+    await page?.close();
   }
 }

@@ -1,4 +1,4 @@
-import type { AppState } from './types.ts';
+import type { AppState, CollectWorkflow, UpdateWorkflow } from './types.ts';
 import { isDryRun } from './config.ts';
 
 type SSEController = ReadableStreamDefaultController<Uint8Array>;
@@ -25,13 +25,23 @@ export function broadcast(event: string, data: unknown) {
   }
 }
 
-let state: AppState = { phase: 'idle', dryRun: isDryRun };
+let state: AppState = {
+  dryRun: isDryRun,
+  collect: { status: 'idle' },
+  update: { status: 'idle' },
+};
 
 export function getState(): AppState {
   return state;
 }
 
-export function setState(update: Partial<AppState>) {
-  state = { ...state, ...update };
+export function setCollectState(update: Partial<CollectWorkflow>) {
+  state = { ...state, collect: { ...state.collect, ...update } };
   broadcast('state', state);
 }
+
+export function setUpdateState(update: Partial<UpdateWorkflow>) {
+  state = { ...state, update: { ...state.update, ...update } };
+  broadcast('state', state);
+}
+
