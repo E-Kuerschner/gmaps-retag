@@ -3,6 +3,7 @@ import { join } from 'path';
 import { mkdirSync } from 'fs';
 import type { Place, CollectedList, ErrorEntry } from '../types.ts';
 import { setCollectState, broadcast } from '../state.ts';
+import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 
@@ -169,5 +170,6 @@ export async function collectList(
     throw err;
   } finally {
     await page?.close();
+    await closeBrowser();
   }
 }

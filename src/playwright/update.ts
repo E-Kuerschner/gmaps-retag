@@ -4,8 +4,11 @@ import { mkdirSync } from 'fs';
 import type { ActionFile, ErrorEntry } from '../types.ts';
 import { setUpdateState, broadcast } from '../state.ts';
 import { isDryRun } from '../config.ts';
+import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
+import { movePlaceToList } from './move-place-to-list.ts';
+import { removePlaceFromList } from './remove-place-from-list.ts';
 
 const LOGS_DIR = join(process.cwd(), 'output', 'logs');
 
@@ -64,99 +67,24 @@ export async function performUpdates(
       broadcast('progress', { current: i + 1, total: actions.length, name: action.name });
 
       try {
-        // Find the place in the list by name.
-        // BRITTLE: role="article" does not exist on place cards in the current Maps UI
-        // (confirmed during collect work — actual wrapper is div.XiKgde, itself a brittle
-        // obfuscated class). The aria-label fallback may also not match. If this stops
-        // working, update to match whatever item selector collect.ts is using, scoped
-        // with :has-text() to filter by name.
-        const placeCard = page!
-          .locator(`[role="article"]:has-text("${action.name}"), [aria-label*="${action.name}"]`)
-          .first();
-
-        try {
-          await placeCard.waitFor({ state: 'visible', timeout: 8_000 });
-        } catch {
-          throw new Error(`Place card for "${action.name}" not visible in the list.`);
-        }
-
-        await placeCard.click();
-        await page!.waitForTimeout(1_500);
-
-        // UNCERTAIN: selector for the "Saved" / bookmark icon in the detail panel.
-        // BRITTLE: data-value="Save" is an internal attribute with no semantic guarantee.
-        const saveIconBtn = page!
-          .locator('[aria-label*="Saved"], [data-value="Save"], button:has-text("Saved")')
-          .first();
-
-        try {
-          await saveIconBtn.waitFor({ state: 'visible', timeout: 8_000 });
-        } catch {
-          throw new Error(`Could not find the Save/Saved icon for "${action.name}".`);
-        }
-
-        await saveIconBtn.click();
-        await page!.waitForTimeout(1_000);
-
-        // UNCERTAIN: popup container selector.
-        const popup = page!.locator('[role="dialog"], [role="menu"]').last();
-        try {
-          await popup.waitFor({ state: 'visible', timeout: 6_000 });
-        } catch {
-          throw new Error(`Save-to-list popup did not appear for "${action.name}".`);
-        }
-
-        // UNCERTAIN: list entry selector inside popup.
-        const currentListEntry = popup
-          .locator(`[aria-label*="${listName}"], :has-text("${listName}")`)
-          .first();
-        try {
-          await currentListEntry.waitFor({ state: 'visible', timeout: 5_000 });
-        } catch {
-          throw new Error(`Could not find "${listName}" entry in popup for "${action.name}".`);
-        }
-
-        let targetListEntry = null;
-        if (action.action === 'move') {
-          targetListEntry = popup
-            .locator(`[aria-label*="${action.targetList}"], :has-text("${action.targetList}")`)
-            .first();
-          try {
-            await targetListEntry.waitFor({ state: 'visible', timeout: 5_000 });
-          } catch {
-            throw new Error(
-              `Could not find target list "${action.targetList}" in popup for "${action.name}".`,
-            );
-          }
-        }
-
         if (isDryRun) {
+          // Validate that the place button is present before reporting success.
+          const placeBtn = page!.getByRole('button', { name: action.name, exact: false });
+          try {
+            await placeBtn.waitFor({ state: 'visible', timeout: 15_000 });
+          } catch {
+            throw new Error(`Place button for "${action.name}" not visible in the list.`);
+          }
           const wouldDo = action.action === 'move'
             ? `remove from "${listName}" and add to "${action.targetList}"`
             : `remove from "${listName}"`;
           console.log(`[dry-run] Would ${wouldDo}: ${action.name}`);
           broadcast('dryRunAction', { name: action.name, action: action.action, targetList: action.targetList });
-          await page!.keyboard.press('Escape');
+        } else if (action.action === 'move') {
+          await movePlaceToList(page!, action.name, listName, action.targetList!);
         } else {
-          await currentListEntry.click();
-
-          if (action.action === 'move') {
-            await page!.waitForTimeout(500);
-            await targetListEntry!.click();
-          }
-
-          await page!.waitForTimeout(800);
-          try {
-            const doneBtn = popup.locator('button:has-text("Done"), button:has-text("Close"), [aria-label="Close"]').first();
-            const isDoneVisible = await doneBtn.isVisible();
-            if (isDoneVisible) await doneBtn.click();
-          } catch { /* popup may have already closed */ }
+          await removePlaceFromList(page!, action.name);
         }
-
-        await page!.waitForTimeout(500);
-
-        await page!.goBack({ waitUntil: 'domcontentloaded' });
-        await page!.waitForTimeout(1_000);
       } catch (err) {
         errors.push({
           location: `"${action.name}" in list "${listName}"`,
@@ -164,11 +92,6 @@ export async function performUpdates(
           timestamp: new Date().toISOString(),
         });
         broadcast('error', { name: action.name, problem: errors[errors.length - 1].problem });
-
-        try {
-          await page!.goBack({ waitUntil: 'domcontentloaded' });
-          await page!.waitForTimeout(1_000);
-        } catch { /* ignore navigation errors */ }
       }
     }
 
@@ -180,7 +103,7 @@ export async function performUpdates(
         ? `Done. ${actions.length - errors.length}/${actions.length} succeeded. Check logs/errors_${ts}.json for failures.`
         : `All ${actions.length} update(s) completed successfully.`;
 
-    setUpdateState({ status: 'done', message: doneMessage });
+    setUpdateState({ status: 'done', message: doneMessage, errorCount: errors.length });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     errors.push({ location: `list "${listName}"`, problem: message, timestamp: new Date().toISOString() });
@@ -189,5 +112,6 @@ export async function performUpdates(
     throw err;
   } finally {
     await page?.close();
+    await closeBrowser();
   }
 }

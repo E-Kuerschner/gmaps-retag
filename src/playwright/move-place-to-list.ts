@@ -33,8 +33,8 @@ export async function movePlaceToList(
   }
   await placeBtn.click();
 
-  // UNCERTAIN: "Saved" label and count format (e.g. "Saved (4)") may change.
-  const savedBtn = () => page.getByRole('button', { name: /^Saved \(\d+\)/ });
+  // UNCERTAIN: button may read "Saved" or "Saved (4)" depending on context.
+  const savedBtn = () => page.getByRole('button', { name: /^Saved( \(\d+\))?$/ });
   try {
     await savedBtn().waitFor({ state: 'visible', timeout: 15_000 });
   } catch {

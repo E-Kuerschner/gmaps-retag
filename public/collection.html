@@ -97,14 +97,18 @@
     </section>
 
     <!-- ── Update done ───────────────────────────────────────────────────── -->
-    <section id="section-done" class="hidden bg-white rounded-xl border border-green-200 p-6 shadow-sm">
+    <section id="section-done" class="hidden bg-white rounded-xl border p-6 shadow-sm">
       <div class="flex items-center gap-3 mb-3">
-        <div class="rounded-full bg-green-100 p-1">
-          <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div id="done-icon" class="rounded-full p-1">
+          <svg id="done-icon-check" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
           </svg>
+          <svg id="done-icon-warn" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
         </div>
-        <h2 class="font-medium text-green-900">Update complete</h2>
+        <h2 id="done-heading" class="font-medium"></h2>
       </div>
       <p id="done-message" class="text-sm text-gray-600 mb-4"></p>
       <a href="/collect"
@@ -323,6 +327,16 @@
         updatingThisSession = false;
         showSection('section-done');
         document.getElementById('done-message').textContent = update.message || 'All updates applied.';
+        const hasErrors = update.errorCount > 0;
+        const section = document.getElementById('section-done');
+        section.className = section.className.replace(/border-\S+/, hasErrors ? 'border-amber-300' : 'border-green-200');
+        document.getElementById('done-icon').className = `rounded-full p-1 ${hasErrors ? 'bg-amber-100' : 'bg-green-100'}`;
+        document.getElementById('done-icon-check').classList.toggle('hidden', hasErrors);
+        document.getElementById('done-icon-check').className = document.getElementById('done-icon-check').className.replace(/text-\S+/, 'text-green-600');
+        document.getElementById('done-icon-warn').classList.toggle('hidden', !hasErrors);
+        document.getElementById('done-icon-warn').className = document.getElementById('done-icon-warn').className.replace(/text-\S+/, 'text-amber-600');
+        document.getElementById('done-heading').textContent = hasErrors ? 'Update complete with errors' : 'Update complete';
+        document.getElementById('done-heading').className = `font-medium ${hasErrors ? 'text-amber-900' : 'text-green-900'}`;
       } else if (update.status === 'error') {
         updatingThisSession = false;
         showSection('section-update-error');

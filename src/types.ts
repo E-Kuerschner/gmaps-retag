@@ -40,6 +40,7 @@ export interface UpdateWorkflow {
   status: 'idle' | 'running' | 'done' | 'error';
   message?: string;
   progress?: { current: number; total: number };
+  errorCount?: number;
 }
 
 export interface AppState {
