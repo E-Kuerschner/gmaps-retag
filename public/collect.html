@@ -89,9 +89,15 @@
 
     <!-- ── Running: live progress ────────────────────────────────────────── -->
     <section id="section-running" class="hidden bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-      <div class="flex items-center gap-3 mb-4">
-        <div class="spinner"></div>
-        <p id="status-message" class="text-sm text-gray-600">Starting…</p>
+      <div class="flex items-center justify-between gap-3 mb-4">
+        <div class="flex items-center gap-3">
+          <div class="spinner"></div>
+          <p id="status-message" class="text-sm text-gray-600">Starting…</p>
+        </div>
+        <button id="cancel-collect-btn" type="button"
+          class="shrink-0 rounded-lg border border-red-300 text-red-600 px-4 py-2 text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50">
+          Cancel
+        </button>
       </div>
       <div id="live-places" class="space-y-1 max-h-64 overflow-y-auto"></div>
     </section>
@@ -104,6 +110,7 @@
     // not to a stale state left over from a previous session or another tab.
     let collectingThisSession = false;
     let browsingThisSession = false;
+    let cancelling = false;
 
     function showSection(id) {
       ['section-idle', 'section-running'].forEach(s => {
@@ -129,17 +136,22 @@
         hideError();
         showSection('section-running');
         if (collect.message) document.getElementById('status-message').textContent = collect.message;
+        const cancelBtn = document.getElementById('cancel-collect-btn');
+        cancelBtn.disabled = cancelling;
+        cancelBtn.textContent = cancelling ? 'Cancelling…' : 'Cancel';
       } else if (collect.status === 'done' && collectingThisSession && collect.outputFile) {
         window.location.href = '/collections/' + encodeURIComponent(collect.outputFile);
       } else if (collect.status === 'error') {
         collectingThisSession = false;
         browsingThisSession = false;
+        cancelling = false;
         showSection('section-idle');
         loadPastCollections();
         showError(collect.message || 'Unknown error');
       } else {
         collectingThisSession = false;
         browsingThisSession = false;
+        cancelling = false;
         hideError();
         showSection('section-idle');
         loadPastCollections();
@@ -158,6 +170,23 @@
       container.scrollTop = container.scrollHeight;
     });
     evtSource.addEventListener('savedLists', e => renderListPicker(JSON.parse(e.data)));
+
+    // ── Cancel a running collect/browse ──────────────────────────────────────
+    document.getElementById('cancel-collect-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('cancel-collect-btn');
+      cancelling = true;
+      btn.disabled = true;
+      btn.textContent = 'Cancelling…';
+
+      const res = await fetch('/api/collect/cancel', { method: 'POST' }).catch(() => null);
+      if (!res || !res.ok) {
+        cancelling = false;
+        btn.disabled = false;
+        btn.textContent = 'Cancel';
+      }
+      // On success the running flow's own state update (via SSE) moves the page
+      // back to idle/error — no need to touch the UI further here.
+    });
 
     // ── Import a selected list ───────────────────────────────────────────────
     async function startCollect(listName) {

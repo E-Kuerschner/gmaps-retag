@@ -1,5 +1,6 @@
 import { type Page } from 'playwright';
 import { join } from 'path';
+import { isCancelRequested, CancelledError } from './cancel.ts';
 
 export const SAVED_LISTS_FILE = 'saved-lists.json';
 
@@ -11,6 +12,7 @@ export async function scrapeSavedListNames(page: Page): Promise<string[]> {
   const count = await nameEls.count();
   const names: string[] = [];
   for (let i = 0; i < count; i++) {
+    if (isCancelRequested()) throw new CancelledError();
     const text = (await nameEls.nth(i).textContent())?.trim();
     if (text) names.push(text);
   }

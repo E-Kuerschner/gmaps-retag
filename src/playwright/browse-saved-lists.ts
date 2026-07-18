@@ -5,6 +5,7 @@ import { setCollectState, broadcast } from '../state.ts';
 import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { scrapeSavedListNames, writeSavedListNames } from './saved-list-names.ts';
+import { isCancelRequested, CancelledError } from './cancel.ts';
 
 const DATA_DIR = join(process.cwd(), 'output', 'data');
 
@@ -36,11 +37,11 @@ export async function browseSavedLists(context: BrowserContext): Promise<void> {
 
     setCollectState({ status: 'idle', message: undefined });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    setCollectState({ status: 'error', message });
-    throw err;
+    const finalErr = isCancelRequested() ? new CancelledError() : err instanceof Error ? err : new Error(String(err));
+    setCollectState({ status: 'error', message: finalErr.message });
+    throw finalErr;
   } finally {
-    await page?.close();
+    await page?.close().catch(() => {});
     await closeBrowser();
   }
 }

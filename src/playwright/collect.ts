@@ -7,6 +7,7 @@ import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 import { scrapeSavedListNames, writeSavedListNames } from './saved-list-names.ts';
+import { isCancelRequested, CancelledError } from './cancel.ts';
 
 const DATA_DIR = join(process.cwd(), 'output', 'data');
 const LOGS_DIR = join(process.cwd(), 'output', 'logs');
@@ -78,6 +79,7 @@ export async function collectList(
     const feed = page.locator('div.DxyBCb').first();
 
     while (true) {
+      if (isCancelRequested()) throw new CancelledError();
       try {
         await feed.evaluate((el) => { el.scrollTo(0, el.scrollHeight); });
       } catch {
@@ -102,6 +104,7 @@ export async function collectList(
     setCollectState({ message: `Found ${total} place(s). Reading names and notes…` });
 
     for (let i = 0; i < total; i++) {
+      if (isCancelRequested()) throw new CancelledError();
       const item = items.nth(i);
       try {
         // BRITTLE: fontHeadlineSmall is a Maps utility class — less likely to change
@@ -153,13 +156,14 @@ export async function collectList(
     setCollectState({ status: 'done', outputFile: outputFileName, message: `Collected ${places.length} place(s).` });
     return outputFile;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const finalErr = isCancelRequested() ? new CancelledError() : err instanceof Error ? err : new Error(String(err));
+    const message = finalErr.message;
     errors.push({ location: `list "${listName}"`, problem: message, timestamp: new Date().toISOString() });
     await saveErrors(errors, ts);
     setCollectState({ status: 'error', message });
-    throw err;
+    throw finalErr;
   } finally {
-    await page?.close();
+    await page?.close().catch(() => {});
     await closeBrowser();
   }
 }

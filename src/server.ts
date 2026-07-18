@@ -5,6 +5,7 @@ import { getBrowserContext, closeBrowser } from './playwright/browser.ts';
 import { collectList } from './playwright/collect.ts';
 import { browseSavedLists } from './playwright/browse-saved-lists.ts';
 import { performUpdates } from './playwright/update.ts';
+import { resetCancel, requestCancel, isCancelRequested } from './playwright/cancel.ts';
 import { isDryRun } from './config.ts';
 import type { PlaceAction, ActionFile, CollectedList } from './types.ts';
 
@@ -130,10 +131,17 @@ const server = Bun.serve({
         return json({ error: 'An operation is already in progress' }, 409);
       }
 
+      resetCancel();
       setCollectState({ status: 'running', listName, outputFile: undefined, message: 'Starting…' });
 
       getBrowserContext()
-        .then((ctx) => collectList(ctx, listName))
+        .then((ctx) => {
+          if (isCancelRequested()) {
+            setCollectState({ status: 'error', message: 'Cancelled by user.' });
+            return;
+          }
+          return collectList(ctx, listName);
+        })
         .catch((err: unknown) => {
           setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
         });
@@ -147,13 +155,37 @@ const server = Bun.serve({
         return json({ error: 'An operation is already in progress' }, 409);
       }
 
+      resetCancel();
       setCollectState({ status: 'browsing', listName: undefined, outputFile: undefined, message: 'Starting…' });
 
       getBrowserContext()
-        .then((ctx) => browseSavedLists(ctx))
+        .then((ctx) => {
+          if (isCancelRequested()) {
+            setCollectState({ status: 'error', message: 'Cancelled by user.' });
+            return;
+          }
+          return browseSavedLists(ctx);
+        })
         .catch((err: unknown) => {
           setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
         });
+
+      return json({ ok: true });
+    }
+
+    // ── POST /api/collect/cancel  (force-stop an in-progress collect/browse run) ─
+    if (pathname === '/api/collect/cancel' && method === 'POST') {
+      const { collect } = getState();
+      if (collect.status !== 'running' && collect.status !== 'browsing') {
+        return json({ error: 'No collect operation is in progress' }, 409);
+      }
+
+      requestCancel();
+      // Force-closing the browser interrupts whatever Playwright call is currently
+      // blocking (goto, waitFor, etc.) — the running flow's own catch block detects
+      // the cancellation and reports it; this closeBrowser() is a fallback in case
+      // it happens before a page/context even exists yet.
+      await closeBrowser().catch(() => {});
 
       return json({ ok: true });
     }
