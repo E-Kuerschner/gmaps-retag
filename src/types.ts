@@ -31,7 +31,7 @@ export interface ErrorEntry {
 }
 
 export interface CollectWorkflow {
-  status: 'idle' | 'running' | 'done' | 'error';
+  status: 'idle' | 'browsing' | 'running' | 'done' | 'error';
   listName?: string;
   outputFile?: string;
   message?: string;
@@ -42,6 +42,7 @@ export interface UpdateWorkflow {
   message?: string;
   progress?: { current: number; total: number };
   errorCount?: number;
+  dryRun?: boolean;
 }
 
 export interface AppState {

@@ -33,24 +33,31 @@
 
   <main class="max-w-4xl mx-auto px-6 py-8 space-y-6">
 
-    <!-- ── Idle: start form ──────────────────────────────────────────────── -->
+    <!-- ── Idle: scan + select ───────────────────────────────────────────── -->
     <section id="section-idle" class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-      <h2 class="font-medium text-gray-900 mb-4">Start a new collection</h2>
-      <form id="collect-form" class="flex gap-3">
-        <input
-          id="list-name"
-          type="text"
-          placeholder="e.g. Date Night Spots"
-          required
-          class="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          type="submit"
+      <h2 class="font-medium text-gray-900 mb-2">Import a list</h2>
+      <p class="text-xs text-gray-400 mb-4">
+        Scan your Google Maps saved lists, then pick one below to import it. A browser window
+        will open — sign into Google Maps if prompted — to read the list names; nothing is
+        imported until you choose one and click Import.
+      </p>
+
+      <div class="flex gap-3">
+        <select id="list-select" disabled
+          class="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:text-gray-400">
+          <option value="">Scan first to see your saved lists…</option>
+        </select>
+        <button id="import-selected-btn" type="button" disabled
           class="rounded-lg bg-blue-600 text-white px-5 py-2 text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
-          Start Collection
+          Import
         </button>
-      </form>
+      </div>
+
+      <button id="browse-lists-btn" type="button"
+        class="mt-3 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors">
+        Scan My Saved Lists
+      </button>
 
       <!-- ── Inline error banner ───────────────────────────────────────────── -->
       <div id="error-banner" class="hidden mt-3 flex items-start gap-3 rounded-lg bg-red-50 border border-red-200 px-4 py-3">
@@ -65,26 +72,32 @@
           </svg>
         </button>
       </div>
-
-      <p class="text-xs text-gray-400 mt-3">
-        A browser window will open. Sign into Google Maps if prompted, then
-        the tool will navigate and collect automatically.
-      </p>
     </section>
 
     <!-- ── Past collections ──────────────────────────────────────────────── -->
     <section id="past-collections" class="hidden bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
-        <h3 class="text-sm font-medium text-gray-700">Past collections</h3>
+        <h3 class="text-sm font-medium text-gray-700">Imported lists</h3>
+        <p class="text-xs text-gray-400 mt-1">
+          Lists already imported below reflect a snapshot from their last sync — changes made
+          in Google Maps since then won't show up here. If it's been a while, click Re-sync
+          on a list to refresh it before reviewing changes.
+        </p>
       </div>
       <ul id="past-collections-list" class="divide-y divide-gray-100 text-sm"></ul>
     </section>
 
     <!-- ── Running: live progress ────────────────────────────────────────── -->
     <section id="section-running" class="hidden bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-      <div class="flex items-center gap-3 mb-4">
-        <div class="spinner"></div>
-        <p id="status-message" class="text-sm text-gray-600">Starting…</p>
+      <div class="flex items-center justify-between gap-3 mb-4">
+        <div class="flex items-center gap-3">
+          <div class="spinner"></div>
+          <p id="status-message" class="text-sm text-gray-600">Starting…</p>
+        </div>
+        <button id="cancel-collect-btn" type="button"
+          class="shrink-0 rounded-lg border border-red-300 text-red-600 px-4 py-2 text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50">
+          Cancel
+        </button>
       </div>
       <div id="live-places" class="space-y-1 max-h-64 overflow-y-auto"></div>
     </section>
@@ -92,10 +105,12 @@
   </main>
 
   <script>
-    // collectingThisSession tracks whether THIS page load started a collection.
-    // We only auto-redirect to the collection page for collections we initiated —
-    // not for a stale 'done' state left over from a previous session.
+    // collectingThisSession / browsingThisSession track whether THIS page load started
+    // that particular workflow — we only react to state for a run we initiated,
+    // not to a stale state left over from a previous session or another tab.
     let collectingThisSession = false;
+    let browsingThisSession = false;
+    let cancelling = false;
 
     function showSection(id) {
       ['section-idle', 'section-running'].forEach(s => {
@@ -117,18 +132,26 @@
       document.getElementById('dry-run-banner').classList.toggle('hidden', !state.dryRun);
       const { collect } = state;
 
-      if (collect.status === 'running') {
+      if (collect.status === 'running' || collect.status === 'browsing') {
         hideError();
         showSection('section-running');
         if (collect.message) document.getElementById('status-message').textContent = collect.message;
+        const cancelBtn = document.getElementById('cancel-collect-btn');
+        cancelBtn.disabled = cancelling;
+        cancelBtn.textContent = cancelling ? 'Cancelling…' : 'Cancel';
       } else if (collect.status === 'done' && collectingThisSession && collect.outputFile) {
         window.location.href = '/collections/' + encodeURIComponent(collect.outputFile);
       } else if (collect.status === 'error') {
         collectingThisSession = false;
+        browsingThisSession = false;
+        cancelling = false;
         showSection('section-idle');
         loadPastCollections();
         showError(collect.message || 'Unknown error');
       } else {
+        collectingThisSession = false;
+        browsingThisSession = false;
+        cancelling = false;
         hideError();
         showSection('section-idle');
         loadPastCollections();
@@ -146,11 +169,27 @@
       container.appendChild(el);
       container.scrollTop = container.scrollHeight;
     });
+    evtSource.addEventListener('savedLists', e => renderListPicker(JSON.parse(e.data)));
 
-    // ── Collect form ─────────────────────────────────────────────────────────
-    document.getElementById('collect-form').addEventListener('submit', async e => {
-      e.preventDefault();
-      const listName = document.getElementById('list-name').value.trim();
+    // ── Cancel a running collect/browse ──────────────────────────────────────
+    document.getElementById('cancel-collect-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('cancel-collect-btn');
+      cancelling = true;
+      btn.disabled = true;
+      btn.textContent = 'Cancelling…';
+
+      const res = await fetch('/api/collect/cancel', { method: 'POST' }).catch(() => null);
+      if (!res || !res.ok) {
+        cancelling = false;
+        btn.disabled = false;
+        btn.textContent = 'Cancel';
+      }
+      // On success the running flow's own state update (via SSE) moves the page
+      // back to idle/error — no need to touch the UI further here.
+    });
+
+    // ── Import a selected list ───────────────────────────────────────────────
+    async function startCollect(listName) {
       if (!listName) return;
 
       hideError();
@@ -168,6 +207,76 @@
         const err = await res.json();
         showError(err.error || 'Failed to start collection');
       }
+    }
+
+    // ── Saved-list picker (scan → select) ────────────────────────────────────
+    let lastScrapedNames = [];
+    let importedListNames = new Set();
+
+    function renderListPicker(names) {
+      lastScrapedNames = names || [];
+      const select = document.getElementById('list-select');
+      const importBtn = document.getElementById('import-selected-btn');
+      const available = lastScrapedNames.filter(name => !importedListNames.has(name));
+
+      select.innerHTML = '';
+
+      if (available.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = lastScrapedNames.length === 0
+          ? 'Scan first to see your saved lists…'
+          : 'All scanned lists are already imported';
+        select.appendChild(opt);
+        select.disabled = true;
+        importBtn.disabled = true;
+        return;
+      }
+
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = `Select a list… (${available.length})`;
+      select.appendChild(placeholder);
+
+      available.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
+      });
+
+      select.disabled = false;
+      importBtn.disabled = true;
+    }
+
+    document.getElementById('list-select').addEventListener('change', e => {
+      document.getElementById('import-selected-btn').disabled = !e.target.value;
+    });
+
+    document.getElementById('import-selected-btn').addEventListener('click', () => {
+      startCollect(document.getElementById('list-select').value);
+    });
+
+    async function loadSavedListPicker() {
+      try {
+        const res = await fetch('/api/saved-lists');
+        renderListPicker(await res.json());
+      } catch {
+        renderListPicker([]);
+      }
+    }
+
+    document.getElementById('browse-lists-btn').addEventListener('click', async () => {
+      hideError();
+      browsingThisSession = true;
+
+      const res = await fetch('/api/collect/browse-lists', { method: 'POST' });
+
+      if (!res.ok) {
+        browsingThisSession = false;
+        const err = await res.json();
+        showError(err.error || 'Failed to start browsing saved lists');
+      }
     });
 
     // ── Error dismiss ────────────────────────────────────────────────────────
@@ -183,28 +292,47 @@
       const section = document.getElementById('past-collections');
       const list = document.getElementById('past-collections-list');
 
+      importedListNames = new Set(files.map(f => f.listName).filter(Boolean));
+      renderListPicker(lastScrapedNames);
+
       if (files.length === 0) {
         section.classList.add('hidden');
         return;
       }
+
+      const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
       list.innerHTML = '';
       files.forEach(({ fileName, listName, lastUpdated }) => {
         const updatedLabel = lastUpdated
           ? new Date(lastUpdated).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
           : '';
+        const isStale = lastUpdated && (Date.now() - new Date(lastUpdated).getTime()) > STALE_AFTER_MS;
         const li = document.createElement('li');
         li.className = 'flex items-center justify-between px-4 py-3';
         li.innerHTML = `
           <a href="/collections/${encodeURIComponent(fileName)}"
              class="text-blue-600 hover:underline font-medium text-sm truncate mr-4">${escHtml(listName || fileName)}</a>
           <div class="flex items-center gap-4 shrink-0">
-            ${updatedLabel ? `<span class="text-xs text-gray-400">${escHtml(updatedLabel)}</span>` : ''}
+            ${updatedLabel
+              ? `<span class="text-xs ${isStale ? 'text-amber-600' : 'text-gray-400'}" title="${isStale ? 'It has been over a week since this list was last synced — click Re-sync to see recent changes.' : ''}">
+                   Last synced ${escHtml(updatedLabel)}${isStale ? ' · re-sync recommended' : ''}
+                 </span>`
+              : ''
+            }
+            <button class="resync-btn text-blue-600 hover:text-blue-700 text-xs font-medium"
+                    data-list="${escHtml(listName || '')}">Re-sync</button>
             <button class="delete-btn text-red-500 hover:text-red-700 text-xs font-medium"
                     data-file="${escHtml(fileName)}">Delete</button>
           </div>
         `;
         list.appendChild(li);
+      });
+
+      list.querySelectorAll('.resync-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.dataset.list) startCollect(btn.dataset.list);
+        });
       });
 
       list.querySelectorAll('.delete-btn').forEach(btn => {
@@ -219,6 +347,7 @@
     }
 
     loadPastCollections();
+    loadSavedListPicker();
 
     function escHtml(str) {
       return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

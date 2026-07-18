@@ -6,25 +6,11 @@ import { setCollectState, broadcast } from '../state.ts';
 import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
-
-const SAVED_LISTS_FILE = 'saved-lists.json';
+import { scrapeSavedListNames, writeSavedListNames } from './saved-list-names.ts';
+import { isCancelRequested, CancelledError } from './cancel.ts';
 
 const DATA_DIR = join(process.cwd(), 'output', 'data');
 const LOGS_DIR = join(process.cwd(), 'output', 'logs');
-
-// List name is in .fontBodyLarge inside each list button; other text in the button
-// (author, sharing status) lives in sibling elements and is intentionally excluded.
-async function scrapeSavedListNames(page: Page): Promise<string[]> {
-  const nameEls = page.locator('button .fontBodyLarge');
-  await nameEls.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-  const count = await nameEls.count();
-  const names: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const text = (await nameEls.nth(i).textContent())?.trim();
-    if (text) names.push(text);
-  }
-  return names;
-}
 
 function safeFileName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, '_');
@@ -69,7 +55,8 @@ export async function collectList(
     try {
       const allListNames = await scrapeSavedListNames(page);
       if (allListNames.length > 0) {
-        await Bun.write(join(DATA_DIR, SAVED_LISTS_FILE), JSON.stringify(allListNames, null, 2));
+        await writeSavedListNames(DATA_DIR, allListNames);
+        broadcast('savedLists', allListNames);
       }
     } catch {
       // Selector drift — list name discovery skipped this run.
@@ -92,6 +79,7 @@ export async function collectList(
     const feed = page.locator('div.DxyBCb').first();
 
     while (true) {
+      if (isCancelRequested()) throw new CancelledError();
       try {
         await feed.evaluate((el) => { el.scrollTo(0, el.scrollHeight); });
       } catch {
@@ -116,6 +104,7 @@ export async function collectList(
     setCollectState({ message: `Found ${total} place(s). Reading names and notes…` });
 
     for (let i = 0; i < total; i++) {
+      if (isCancelRequested()) throw new CancelledError();
       const item = items.nth(i);
       try {
         // BRITTLE: fontHeadlineSmall is a Maps utility class — less likely to change
@@ -167,13 +156,14 @@ export async function collectList(
     setCollectState({ status: 'done', outputFile: outputFileName, message: `Collected ${places.length} place(s).` });
     return outputFile;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const finalErr = isCancelRequested() ? new CancelledError() : err instanceof Error ? err : new Error(String(err));
+    const message = finalErr.message;
     errors.push({ location: `list "${listName}"`, problem: message, timestamp: new Date().toISOString() });
     await saveErrors(errors, ts);
     setCollectState({ status: 'error', message });
-    throw err;
+    throw finalErr;
   } finally {
-    await page?.close();
+    await page?.close().catch(() => {});
     await closeBrowser();
   }
 }

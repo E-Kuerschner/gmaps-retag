@@ -3,7 +3,10 @@ import { readdirSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { getState, setCollectState, setUpdateState, addSSEClient, removeSSEClient } from './state.ts';
 import { getBrowserContext, closeBrowser } from './playwright/browser.ts';
 import { collectList } from './playwright/collect.ts';
+import { browseSavedLists } from './playwright/browse-saved-lists.ts';
 import { performUpdates } from './playwright/update.ts';
+import { resetCancel, requestCancel, isCancelRequested } from './playwright/cancel.ts';
+import { isDryRun } from './config.ts';
 import type { PlaceAction, ActionFile, CollectedList } from './types.ts';
 
 const PUBLIC_DIR = join(import.meta.dir, '..', 'public');
@@ -24,6 +27,11 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function isBusy(): boolean {
+  const { collect, update } = getState();
+  return collect.status === 'running' || collect.status === 'browsing' || update.status === 'running';
 }
 
 function makeSSEResponse(): Response {
@@ -119,18 +127,65 @@ const server = Bun.serve({
       const listName = body.listName?.trim();
       if (!listName) return json({ error: 'listName is required' }, 400);
 
-      const current = getState();
-      if (current.collect.status === 'running' || current.update.status === 'running') {
+      if (isBusy()) {
         return json({ error: 'An operation is already in progress' }, 409);
       }
 
+      resetCancel();
       setCollectState({ status: 'running', listName, outputFile: undefined, message: 'Starting…' });
 
       getBrowserContext()
-        .then((ctx) => collectList(ctx, listName))
+        .then((ctx) => {
+          if (isCancelRequested()) {
+            setCollectState({ status: 'error', message: 'Cancelled by user.' });
+            return;
+          }
+          return collectList(ctx, listName);
+        })
         .catch((err: unknown) => {
           setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
         });
+
+      return json({ ok: true });
+    }
+
+    // ── POST /api/collect/browse-lists  (scrape all saved list names for picking) ─
+    if (pathname === '/api/collect/browse-lists' && method === 'POST') {
+      if (isBusy()) {
+        return json({ error: 'An operation is already in progress' }, 409);
+      }
+
+      resetCancel();
+      setCollectState({ status: 'browsing', listName: undefined, outputFile: undefined, message: 'Starting…' });
+
+      getBrowserContext()
+        .then((ctx) => {
+          if (isCancelRequested()) {
+            setCollectState({ status: 'error', message: 'Cancelled by user.' });
+            return;
+          }
+          return browseSavedLists(ctx);
+        })
+        .catch((err: unknown) => {
+          setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+        });
+
+      return json({ ok: true });
+    }
+
+    // ── POST /api/collect/cancel  (force-stop an in-progress collect/browse run) ─
+    if (pathname === '/api/collect/cancel' && method === 'POST') {
+      const { collect } = getState();
+      if (collect.status !== 'running' && collect.status !== 'browsing') {
+        return json({ error: 'No collect operation is in progress' }, 409);
+      }
+
+      requestCancel();
+      // Force-closing the browser interrupts whatever Playwright call is currently
+      // blocking (goto, waitFor, etc.) — the running flow's own catch block detects
+      // the cancellation and reports it; this closeBrowser() is a fallback in case
+      // it happens before a page/context even exists yet.
+      await closeBrowser().catch(() => {});
 
       return json({ ok: true });
     }
@@ -143,16 +198,16 @@ const server = Bun.serve({
 
     // ── POST /api/update/start  (create action file + launch update workflow) ─
     if (pathname === '/api/update/start' && method === 'POST') {
-      const body = (await req.json()) as { collectionFile?: string; actions?: PlaceAction[] };
+      const body = (await req.json()) as { collectionFile?: string; actions?: PlaceAction[]; dryRun?: boolean };
       const { collectionFile, actions = [] } = body;
+      const dryRun = isDryRun || body.dryRun === true;
 
       if (!collectionFile) return json({ error: 'collectionFile is required' }, 400);
 
       const collectionPath = join(DATA_DIR, collectionFile);
       if (!existsSync(collectionPath)) return json({ error: 'Collection file not found' }, 404);
 
-      const current = getState();
-      if (current.collect.status === 'running' || current.update.status === 'running') {
+      if (isBusy()) {
         return json({ error: 'An operation is already in progress' }, 409);
       }
 
@@ -170,10 +225,10 @@ const server = Bun.serve({
       };
       await Bun.write(actionFilePath, JSON.stringify(actionData, null, 2));
 
-      setUpdateState({ status: 'running', message: 'Starting update…', progress: undefined });
+      setUpdateState({ status: 'running', message: 'Starting update…', progress: undefined, dryRun });
 
       getBrowserContext()
-        .then((ctx) => performUpdates(ctx, actionFilePath))
+        .then((ctx) => performUpdates(ctx, actionFilePath, dryRun))
         .catch((err: unknown) => {
           setUpdateState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
         });

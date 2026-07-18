@@ -3,7 +3,6 @@ import { join } from 'path';
 import { mkdirSync } from 'fs';
 import type { ActionFile, ErrorEntry } from '../types.ts';
 import { setUpdateState, broadcast } from '../state.ts';
-import { isDryRun } from '../config.ts';
 import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
@@ -27,6 +26,7 @@ async function saveErrors(errors: ErrorEntry[], ts: string): Promise<void> {
 export async function performUpdates(
   context: BrowserContext,
   actionFilePath: string,
+  dryRun: boolean,
 ): Promise<void> {
   const ts = timestamp();
   const errors: ErrorEntry[] = [];
@@ -40,8 +40,9 @@ export async function performUpdates(
   try {
     setUpdateState({
       status: 'running',
-      message: `${isDryRun ? '[DRY RUN] ' : ''}Opening Google Maps…`,
+      message: `${dryRun ? '[DRY RUN] ' : ''}Opening Google Maps…`,
       progress: { current: 0, total: actions.length },
+      dryRun,
     });
 
     try {
@@ -62,12 +63,12 @@ export async function performUpdates(
 
     for (let i = 0; i < actions.length; i++) {
       const action = actions[i];
-      const label = `${isDryRun ? '[DRY RUN] ' : ''}Processing ${i + 1}/${actions.length}: ${action.name}`;
+      const label = `${dryRun ? '[DRY RUN] ' : ''}Processing ${i + 1}/${actions.length}: ${action.name}`;
       setUpdateState({ message: label, progress: { current: i + 1, total: actions.length } });
       broadcast('progress', { current: i + 1, total: actions.length, name: action.name });
 
       try {
-        if (isDryRun) {
+        if (dryRun) {
           // Validate that the place button is present before reporting success.
           const placeBtn = page!.getByRole('button', { name: action.name, exact: false });
           try {
@@ -97,7 +98,7 @@ export async function performUpdates(
 
     await saveErrors(errors, ts);
 
-    const doneMessage = isDryRun
+    const doneMessage = dryRun
       ? `Dry run complete. ${actions.length - errors.length}/${actions.length} selector(s) validated. No changes were made.`
       : errors.length > 0
         ? `Done. ${actions.length - errors.length}/${actions.length} succeeded. Check logs/errors_${ts}.json for failures.`

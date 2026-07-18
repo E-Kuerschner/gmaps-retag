@@ -31,7 +31,7 @@ Open **http://localhost:3000** in your browser.
 
 ```
 /                         Home
-└── /collect              Collect — start a new collection or browse past ones
+└── /collect              Collect — import a new list or browse previously imported ones
     └── /collections/:f   Collection — review places, assign actions, run update
 ```
 
@@ -41,7 +41,11 @@ Each collection is a permanent URL. Browser back and forward work naturally thro
 
 **Step 1 — Collect** (`/collect`)
 
-Enter the name of a Google Maps saved list and click _Start Collection_. A browser window opens, navigates to Google Maps, and first captures the names of all your saved lists (written to `output/saved-lists.json` for use in the _Move to…_ dropdown). It then opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
+Click _Scan My Saved Lists_. A browser window opens, navigates to Google Maps, and reads the names of all your saved lists — no places are scraped yet, just the list names (written to `output/saved-lists.json`, also used elsewhere for the _Move to…_ dropdown). Once it finishes, pick one from the dropdown (lists already imported are left out, since re-syncing those is handled below) and click _Import_. That runs the full import — opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
+
+Previously imported lists appear below with a "Last synced" timestamp — since each is a point-in-time snapshot, click _Re-sync_ next to a list to refresh it if it's been a while (the page flags anything older than a week and suggests a re-sync).
+
+While a scan or import is running, a _Cancel_ button is available if it gets stuck (e.g. Maps never finishing loading, or a scroll loop that never reaches the bottom). Cancelling force-closes the Playwright browser, which is what actually unblocks whatever call was hanging — see [Cancellation](#cancellation) below.
 
 **Step 2 — Review** (`/collections/:fileName`)
 
@@ -49,11 +53,22 @@ The collection page shows every place with its address and note. For each place 
 
 **Step 3 — Update** (same page)
 
-Click _Start Update_. The browser navigates back to Maps and applies every marked change. Progress is shown inline; individual failures are logged without stopping the rest of the run. The actions file is written to `output/` for reference.
+Check _Dry run_ if you just want to validate selectors without touching real data, then click _Start Update_. The browser navigates back to Maps and applies every marked change. Progress is shown inline; individual failures are logged without stopping the rest of the run. The actions file is written to `output/` for reference.
 
 ### Dry-run mode
 
-Start the server with `DRY_RUN=true` (or use the `dev:dry` / `start:dry` scripts). The browser navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. An amber banner appears on all pages and the collection page logs what _would_ have been applied. Use this to validate selectors before touching real data.
+Dry run is a per-update choice, not a server-wide setting: tick the _Dry run_ checkbox above the action table before clicking _Start Update_. The browser navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. An amber banner appears on the collection page and it logs what _would_ have been applied instead of applying it.
+
+Starting the server with `DRY_RUN=true` (or the `dev:dry` / `start:dry` scripts) forces every update to run as a dry run regardless of the checkbox — the checkbox is shown checked and disabled in that case. Use the env var for a server that should never write to Maps (e.g. a staging setup); use the per-update checkbox to validate a specific run on an otherwise live server.
+
+### Cancellation
+
+Playwright automation can hang — Maps never finishing a load, or a scroll loop that never detects it's reached the bottom. `POST /api/collect/cancel` (wired to the _Cancel_ button on `/collect`) handles this by:
+
+1. Setting a module-level flag (`src/playwright/cancel.ts`) that `collect.ts`, `browse-saved-lists.ts`, and `saved-list-names.ts` check between loop iterations, so a run that's merely looping stops on its next check.
+2. Force-closing the persistent Playwright browser context. This is what actually unblocks a run that's stuck *inside* a single blocking call (`page.goto`, `locator.waitFor`, etc.) — closing the context makes Playwright reject that in-flight call immediately.
+
+Either path lands in the flow's own `catch` block, which checks the cancellation flag and reports `"Cancelled by user."` as the terminal error state instead of whatever raw Playwright error surfaced. The update workflow doesn't yet have the same cancel wiring.
 
 ## Output files
 
@@ -110,6 +125,8 @@ Each workflow follows the same simple lifecycle:
 
 ```
 collect:   idle ──▶ running ──▶ done
+             │            └──▶ error
+             └──▶ browsing ──▶ idle   (scrape saved list names, then back to idle)
                           └──▶ error
 
 update:    idle ──▶ running ──▶ done
@@ -136,9 +153,11 @@ DEL  /api/collect-files/:name    → delete a collection file
 POST /api/log-error              → { message } — write a client-side error entry to output/errors_{ts}.json
 
 POST /api/collect/start          → { listName } — launch collect workflow
+POST /api/collect/browse-lists   → scrape all saved list names (no listName needed); writes output/saved-lists.json and broadcasts a savedLists event
+POST /api/collect/cancel         → force-stop an in-progress collect/browse run (see Cancellation)
 POST /api/collect/reset          → reset collect workflow to idle
 
-POST /api/update/start           → { collectionFile, actions[] } — write action file, launch update workflow
+POST /api/update/start           → { collectionFile, actions[], dryRun? } — write action file, launch update workflow (dryRun forced true if server started with DRY_RUN=true)
 POST /api/update/reset           → reset update workflow to idle
 
 POST /api/reset                  → reset both workflows to idle
@@ -159,6 +178,7 @@ Browser tab                         Server
     │         [Playwright runs in background]
     │                                  │
     │ ◀── event: place ──────────────── │  each scraped place (collect)
+    │ ◀── event: savedLists ─────────── │  full list of saved-list names (collect, browse-lists)
     │ ◀── event: progress ───────────── │  per-item progress (update)
     │ ◀── event: error ──────────────── │  per-item failure (update)
     │ ◀── event: dryRunAction ────────── │  dry-run log entry (update)
@@ -176,6 +196,9 @@ Navigation to Google Maps is broken into composable, reusable steps in `src/play
 | `browser.ts` | `getBrowserContext()` | Creates/reuses the persistent Chromium profile in `browser-data/` |
 | `open-saved-lists.ts` | `(context) → Page` | Navigates to Maps and opens the saved-lists panel |
 | `open-list-by-name.ts` | `(page, listName) → Page` | Clicks a named list in the panel |
+| `saved-list-names.ts` | `scrapeSavedListNames(page)`, `writeSavedListNames(dir, names)` | Reads list names from the open saved-lists panel and persists them |
+| `browse-saved-lists.ts` | `(context) → void` | Standalone flow: open saved lists, scrape names only, write JSON, broadcast — used by "Scan My Saved Lists" |
+| `cancel.ts` | `requestCancel()`, `isCancelRequested()`, `resetCancel()`, `CancelledError` | Cooperative cancellation flag checked by collect/browse loops — see [Cancellation](#cancellation) |
 | `get-place-details.ts` | `(page, placeName) → PlaceDetails` | Clicks a place, scrapes name/address/note |
 | `remove-place-from-list.ts` | `(page, placeName) → Page` | Hovers to reveal the delete button and removes the place |
 | `move-place-to-list.ts` | `(page, placeName, src, dest) → Page` | Moves a place between lists via the Saved dropdown |
