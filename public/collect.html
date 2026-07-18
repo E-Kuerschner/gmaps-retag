@@ -33,24 +33,31 @@
 
   <main class="max-w-4xl mx-auto px-6 py-8 space-y-6">
 
-    <!-- ── Idle: start form ──────────────────────────────────────────────── -->
+    <!-- ── Idle: scan + select ───────────────────────────────────────────── -->
     <section id="section-idle" class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-      <h2 class="font-medium text-gray-900 mb-4">Import a new list</h2>
-      <form id="collect-form" class="flex gap-3">
-        <input
-          id="list-name"
-          type="text"
-          placeholder="e.g. Date Night Spots"
-          required
-          class="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          type="submit"
+      <h2 class="font-medium text-gray-900 mb-2">Import a list</h2>
+      <p class="text-xs text-gray-400 mb-4">
+        Scan your Google Maps saved lists, then pick one below to import it. A browser window
+        will open — sign into Google Maps if prompted — to read the list names; nothing is
+        imported until you choose one and click Import.
+      </p>
+
+      <div class="flex gap-3">
+        <select id="list-select" disabled
+          class="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:text-gray-400">
+          <option value="">Scan first to see your saved lists…</option>
+        </select>
+        <button id="import-selected-btn" type="button" disabled
           class="rounded-lg bg-blue-600 text-white px-5 py-2 text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
-          Import List
+          Import
         </button>
-      </form>
+      </div>
+
+      <button id="browse-lists-btn" type="button"
+        class="mt-3 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors">
+        Scan My Saved Lists
+      </button>
 
       <!-- ── Inline error banner ───────────────────────────────────────────── -->
       <div id="error-banner" class="hidden mt-3 flex items-start gap-3 rounded-lg bg-red-50 border border-red-200 px-4 py-3">
@@ -65,29 +72,6 @@
           </svg>
         </button>
       </div>
-
-      <p class="text-xs text-gray-400 mt-3">
-        Enter the exact name of one of your Google Maps saved lists. A browser window
-        will open — sign into Google Maps if prompted — and every place in that list will
-        be scraped and imported here for review.
-      </p>
-
-      <div class="mt-6 pt-5 border-t border-gray-100">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <h3 class="text-sm font-medium text-gray-700">Not sure of the exact name?</h3>
-            <p class="text-xs text-gray-400 mt-1">
-              Browse all of your saved lists instead — a browser window will open (sign into
-              Google Maps if prompted) to read the list names, then pick one below to import it.
-            </p>
-          </div>
-          <button id="browse-lists-btn" type="button"
-            class="shrink-0 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-            Browse My Lists
-          </button>
-        </div>
-        <div id="list-picker" class="hidden flex flex-wrap gap-2 mt-3"></div>
-      </div>
     </section>
 
     <!-- ── Past collections ──────────────────────────────────────────────── -->
@@ -96,8 +80,8 @@
         <h3 class="text-sm font-medium text-gray-700">Imported lists</h3>
         <p class="text-xs text-gray-400 mt-1">
           Lists already imported below reflect a snapshot from their last sync — changes made
-          in Google Maps since then won't show up here. If it's been a while, re-import one
-          above (by name or by browsing your lists) to refresh it before reviewing changes.
+          in Google Maps since then won't show up here. If it's been a while, click Re-sync
+          on a list to refresh it before reviewing changes.
         </p>
       </div>
       <ul id="past-collections-list" class="divide-y divide-gray-100 text-sm"></ul>
@@ -175,7 +159,7 @@
     });
     evtSource.addEventListener('savedLists', e => renderListPicker(JSON.parse(e.data)));
 
-    // ── Collect form ─────────────────────────────────────────────────────────
+    // ── Import a selected list ───────────────────────────────────────────────
     async function startCollect(listName) {
       if (!listName) return;
 
@@ -196,34 +180,53 @@
       }
     }
 
-    document.getElementById('collect-form').addEventListener('submit', e => {
-      e.preventDefault();
-      startCollect(document.getElementById('list-name').value.trim());
-    });
+    // ── Saved-list picker (scan → select) ────────────────────────────────────
+    let lastScrapedNames = [];
+    let importedListNames = new Set();
 
-    // ── Browse saved lists ───────────────────────────────────────────────────
     function renderListPicker(names) {
-      const container = document.getElementById('list-picker');
-      if (!names || names.length === 0) {
-        container.classList.add('hidden');
-        container.innerHTML = '';
+      lastScrapedNames = names || [];
+      const select = document.getElementById('list-select');
+      const importBtn = document.getElementById('import-selected-btn');
+      const available = lastScrapedNames.filter(name => !importedListNames.has(name));
+
+      select.innerHTML = '';
+
+      if (available.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = lastScrapedNames.length === 0
+          ? 'Scan first to see your saved lists…'
+          : 'All scanned lists are already imported';
+        select.appendChild(opt);
+        select.disabled = true;
+        importBtn.disabled = true;
         return;
       }
 
-      container.innerHTML = '';
-      names.forEach(name => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'rounded-full border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:border-blue-400 hover:text-blue-600 transition-colors';
-        btn.textContent = name;
-        btn.addEventListener('click', () => {
-          document.getElementById('list-name').value = name;
-          startCollect(name);
-        });
-        container.appendChild(btn);
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = `Select a list… (${available.length})`;
+      select.appendChild(placeholder);
+
+      available.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
       });
-      container.classList.remove('hidden');
+
+      select.disabled = false;
+      importBtn.disabled = true;
     }
+
+    document.getElementById('list-select').addEventListener('change', e => {
+      document.getElementById('import-selected-btn').disabled = !e.target.value;
+    });
+
+    document.getElementById('import-selected-btn').addEventListener('click', () => {
+      startCollect(document.getElementById('list-select').value);
+    });
 
     async function loadSavedListPicker() {
       try {
@@ -260,6 +263,9 @@
       const section = document.getElementById('past-collections');
       const list = document.getElementById('past-collections-list');
 
+      importedListNames = new Set(files.map(f => f.listName).filter(Boolean));
+      renderListPicker(lastScrapedNames);
+
       if (files.length === 0) {
         section.classList.add('hidden');
         return;
@@ -280,16 +286,24 @@
              class="text-blue-600 hover:underline font-medium text-sm truncate mr-4">${escHtml(listName || fileName)}</a>
           <div class="flex items-center gap-4 shrink-0">
             ${updatedLabel
-              ? `<span class="text-xs ${isStale ? 'text-amber-600' : 'text-gray-400'}" title="${isStale ? 'It has been over a week since this list was last synced — re-import to see recent changes.' : ''}">
+              ? `<span class="text-xs ${isStale ? 'text-amber-600' : 'text-gray-400'}" title="${isStale ? 'It has been over a week since this list was last synced — click Re-sync to see recent changes.' : ''}">
                    Last synced ${escHtml(updatedLabel)}${isStale ? ' · re-sync recommended' : ''}
                  </span>`
               : ''
             }
+            <button class="resync-btn text-blue-600 hover:text-blue-700 text-xs font-medium"
+                    data-list="${escHtml(listName || '')}">Re-sync</button>
             <button class="delete-btn text-red-500 hover:text-red-700 text-xs font-medium"
                     data-file="${escHtml(fileName)}">Delete</button>
           </div>
         `;
         list.appendChild(li);
+      });
+
+      list.querySelectorAll('.resync-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.dataset.list) startCollect(btn.dataset.list);
+        });
       });
 
       list.querySelectorAll('.delete-btn').forEach(btn => {

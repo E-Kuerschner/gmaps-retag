@@ -41,11 +41,9 @@ Each collection is a permanent URL. Browser back and forward work naturally thro
 
 **Step 1 — Collect** (`/collect`)
 
-Enter the exact name of a Google Maps saved list and click _Import List_. A browser window opens, navigates to Google Maps, and first captures the names of all your saved lists (written to `output/saved-lists.json` for use in the _Move to…_ dropdown and the list picker described below). It then opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
+Click _Scan My Saved Lists_. A browser window opens, navigates to Google Maps, and reads the names of all your saved lists — no places are scraped yet, just the list names (written to `output/saved-lists.json`, also used elsewhere for the _Move to…_ dropdown). Once it finishes, pick one from the dropdown (lists already imported are left out, since re-syncing those is handled below) and click _Import_. That runs the full import — opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
 
-If you don't know the exact list name, click _Browse My Lists_ instead. This opens the same kind of browser window solely to read your saved list names (writing them to `output/saved-lists.json`, same as above) — no places are scraped yet. Once it finishes, the names appear as clickable pills; picking one runs the normal import for that list.
-
-Previously imported lists appear below the form with a "Last synced" timestamp — since each is a point-in-time snapshot, re-import a list (by name or by browsing) to refresh it if it's been a while (the page flags anything older than a week and suggests a re-sync).
+Previously imported lists appear below with a "Last synced" timestamp — since each is a point-in-time snapshot, click _Re-sync_ next to a list to refresh it if it's been a while (the page flags anything older than a week and suggests a re-sync).
 
 **Step 2 — Review** (`/collections/:fileName`)
 
@@ -187,7 +185,7 @@ Navigation to Google Maps is broken into composable, reusable steps in `src/play
 | `open-saved-lists.ts` | `(context) → Page` | Navigates to Maps and opens the saved-lists panel |
 | `open-list-by-name.ts` | `(page, listName) → Page` | Clicks a named list in the panel |
 | `saved-list-names.ts` | `scrapeSavedListNames(page)`, `writeSavedListNames(dir, names)` | Reads list names from the open saved-lists panel and persists them |
-| `browse-saved-lists.ts` | `(context) → void` | Standalone flow: open saved lists, scrape names only, write JSON, broadcast — used by the "Browse My Lists" picker |
+| `browse-saved-lists.ts` | `(context) → void` | Standalone flow: open saved lists, scrape names only, write JSON, broadcast — used by "Scan My Saved Lists" |
 | `get-place-details.ts` | `(page, placeName) → PlaceDetails` | Clicks a place, scrapes name/address/note |
 | `remove-place-from-list.ts` | `(page, placeName) → Page` | Hovers to reveal the delete button and removes the place |
 | `move-place-to-list.ts` | `(page, placeName, src, dest) → Page` | Moves a place between lists via the Saved dropdown |
