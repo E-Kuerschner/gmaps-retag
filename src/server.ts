@@ -3,6 +3,7 @@ import { readdirSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { getState, setCollectState, setUpdateState, addSSEClient, removeSSEClient } from './state.ts';
 import { getBrowserContext, closeBrowser } from './playwright/browser.ts';
 import { collectList } from './playwright/collect.ts';
+import { browseSavedLists } from './playwright/browse-saved-lists.ts';
 import { performUpdates } from './playwright/update.ts';
 import { isDryRun } from './config.ts';
 import type { PlaceAction, ActionFile, CollectedList } from './types.ts';
@@ -25,6 +26,11 @@ function json(data: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function isBusy(): boolean {
+  const { collect, update } = getState();
+  return collect.status === 'running' || collect.status === 'browsing' || update.status === 'running';
 }
 
 function makeSSEResponse(): Response {
@@ -120,8 +126,7 @@ const server = Bun.serve({
       const listName = body.listName?.trim();
       if (!listName) return json({ error: 'listName is required' }, 400);
 
-      const current = getState();
-      if (current.collect.status === 'running' || current.update.status === 'running') {
+      if (isBusy()) {
         return json({ error: 'An operation is already in progress' }, 409);
       }
 
@@ -129,6 +134,23 @@ const server = Bun.serve({
 
       getBrowserContext()
         .then((ctx) => collectList(ctx, listName))
+        .catch((err: unknown) => {
+          setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+        });
+
+      return json({ ok: true });
+    }
+
+    // ── POST /api/collect/browse-lists  (scrape all saved list names for picking) ─
+    if (pathname === '/api/collect/browse-lists' && method === 'POST') {
+      if (isBusy()) {
+        return json({ error: 'An operation is already in progress' }, 409);
+      }
+
+      setCollectState({ status: 'browsing', listName: undefined, outputFile: undefined, message: 'Starting…' });
+
+      getBrowserContext()
+        .then((ctx) => browseSavedLists(ctx))
         .catch((err: unknown) => {
           setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
         });
@@ -153,8 +175,7 @@ const server = Bun.serve({
       const collectionPath = join(DATA_DIR, collectionFile);
       if (!existsSync(collectionPath)) return json({ error: 'Collection file not found' }, 404);
 
-      const current = getState();
-      if (current.collect.status === 'running' || current.update.status === 'running') {
+      if (isBusy()) {
         return json({ error: 'An operation is already in progress' }, 409);
       }
 

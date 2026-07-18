@@ -71,6 +71,23 @@
         will open — sign into Google Maps if prompted — and every place in that list will
         be scraped and imported here for review.
       </p>
+
+      <div class="mt-6 pt-5 border-t border-gray-100">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <h3 class="text-sm font-medium text-gray-700">Not sure of the exact name?</h3>
+            <p class="text-xs text-gray-400 mt-1">
+              Browse all of your saved lists instead — a browser window will open (sign into
+              Google Maps if prompted) to read the list names, then pick one below to import it.
+            </p>
+          </div>
+          <button id="browse-lists-btn" type="button"
+            class="shrink-0 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+            Browse My Lists
+          </button>
+        </div>
+        <div id="list-picker" class="hidden flex flex-wrap gap-2 mt-3"></div>
+      </div>
     </section>
 
     <!-- ── Past collections ──────────────────────────────────────────────── -->
@@ -79,8 +96,8 @@
         <h3 class="text-sm font-medium text-gray-700">Imported lists</h3>
         <p class="text-xs text-gray-400 mt-1">
           Lists already imported below reflect a snapshot from their last sync — changes made
-          in Google Maps since then won't show up here. If it's been a while, re-import a list
-          by name above to refresh it before reviewing changes.
+          in Google Maps since then won't show up here. If it's been a while, re-import one
+          above (by name or by browsing your lists) to refresh it before reviewing changes.
         </p>
       </div>
       <ul id="past-collections-list" class="divide-y divide-gray-100 text-sm"></ul>
@@ -98,10 +115,11 @@
   </main>
 
   <script>
-    // collectingThisSession tracks whether THIS page load started a collection.
-    // We only auto-redirect to the collection page for collections we initiated —
-    // not for a stale 'done' state left over from a previous session.
+    // collectingThisSession / browsingThisSession track whether THIS page load started
+    // that particular workflow — we only react to state for a run we initiated,
+    // not to a stale state left over from a previous session or another tab.
     let collectingThisSession = false;
+    let browsingThisSession = false;
 
     function showSection(id) {
       ['section-idle', 'section-running'].forEach(s => {
@@ -123,7 +141,7 @@
       document.getElementById('dry-run-banner').classList.toggle('hidden', !state.dryRun);
       const { collect } = state;
 
-      if (collect.status === 'running') {
+      if (collect.status === 'running' || collect.status === 'browsing') {
         hideError();
         showSection('section-running');
         if (collect.message) document.getElementById('status-message').textContent = collect.message;
@@ -131,10 +149,13 @@
         window.location.href = '/collections/' + encodeURIComponent(collect.outputFile);
       } else if (collect.status === 'error') {
         collectingThisSession = false;
+        browsingThisSession = false;
         showSection('section-idle');
         loadPastCollections();
         showError(collect.message || 'Unknown error');
       } else {
+        collectingThisSession = false;
+        browsingThisSession = false;
         hideError();
         showSection('section-idle');
         loadPastCollections();
@@ -152,11 +173,10 @@
       container.appendChild(el);
       container.scrollTop = container.scrollHeight;
     });
+    evtSource.addEventListener('savedLists', e => renderListPicker(JSON.parse(e.data)));
 
     // ── Collect form ─────────────────────────────────────────────────────────
-    document.getElementById('collect-form').addEventListener('submit', async e => {
-      e.preventDefault();
-      const listName = document.getElementById('list-name').value.trim();
+    async function startCollect(listName) {
       if (!listName) return;
 
       hideError();
@@ -173,6 +193,57 @@
         collectingThisSession = false;
         const err = await res.json();
         showError(err.error || 'Failed to start collection');
+      }
+    }
+
+    document.getElementById('collect-form').addEventListener('submit', e => {
+      e.preventDefault();
+      startCollect(document.getElementById('list-name').value.trim());
+    });
+
+    // ── Browse saved lists ───────────────────────────────────────────────────
+    function renderListPicker(names) {
+      const container = document.getElementById('list-picker');
+      if (!names || names.length === 0) {
+        container.classList.add('hidden');
+        container.innerHTML = '';
+        return;
+      }
+
+      container.innerHTML = '';
+      names.forEach(name => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'rounded-full border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:border-blue-400 hover:text-blue-600 transition-colors';
+        btn.textContent = name;
+        btn.addEventListener('click', () => {
+          document.getElementById('list-name').value = name;
+          startCollect(name);
+        });
+        container.appendChild(btn);
+      });
+      container.classList.remove('hidden');
+    }
+
+    async function loadSavedListPicker() {
+      try {
+        const res = await fetch('/api/saved-lists');
+        renderListPicker(await res.json());
+      } catch {
+        renderListPicker([]);
+      }
+    }
+
+    document.getElementById('browse-lists-btn').addEventListener('click', async () => {
+      hideError();
+      browsingThisSession = true;
+
+      const res = await fetch('/api/collect/browse-lists', { method: 'POST' });
+
+      if (!res.ok) {
+        browsingThisSession = false;
+        const err = await res.json();
+        showError(err.error || 'Failed to start browsing saved lists');
       }
     });
 
@@ -233,6 +304,7 @@
     }
 
     loadPastCollections();
+    loadSavedListPicker();
 
     function escHtml(str) {
       return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

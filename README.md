@@ -41,9 +41,11 @@ Each collection is a permanent URL. Browser back and forward work naturally thro
 
 **Step 1 — Collect** (`/collect`)
 
-Enter the exact name of a Google Maps saved list and click _Import List_. A browser window opens, navigates to Google Maps, and first captures the names of all your saved lists (written to `output/saved-lists.json` for use in the _Move to…_ dropdown). It then opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
+Enter the exact name of a Google Maps saved list and click _Import List_. A browser window opens, navigates to Google Maps, and first captures the names of all your saved lists (written to `output/saved-lists.json` for use in the _Move to…_ dropdown and the list picker described below). It then opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
 
-Previously imported lists appear below the form with a "Last synced" timestamp — since each is a point-in-time snapshot, re-import a list by name to refresh it if it's been a while (the page flags anything older than a week and suggests a re-sync).
+If you don't know the exact list name, click _Browse My Lists_ instead. This opens the same kind of browser window solely to read your saved list names (writing them to `output/saved-lists.json`, same as above) — no places are scraped yet. Once it finishes, the names appear as clickable pills; picking one runs the normal import for that list.
+
+Previously imported lists appear below the form with a "Last synced" timestamp — since each is a point-in-time snapshot, re-import a list (by name or by browsing) to refresh it if it's been a while (the page flags anything older than a week and suggests a re-sync).
 
 **Step 2 — Review** (`/collections/:fileName`)
 
@@ -114,6 +116,8 @@ Each workflow follows the same simple lifecycle:
 
 ```
 collect:   idle ──▶ running ──▶ done
+             │            └──▶ error
+             └──▶ browsing ──▶ idle   (scrape saved list names, then back to idle)
                           └──▶ error
 
 update:    idle ──▶ running ──▶ done
@@ -140,6 +144,7 @@ DEL  /api/collect-files/:name    → delete a collection file
 POST /api/log-error              → { message } — write a client-side error entry to output/errors_{ts}.json
 
 POST /api/collect/start          → { listName } — launch collect workflow
+POST /api/collect/browse-lists   → scrape all saved list names (no listName needed); writes output/saved-lists.json and broadcasts a savedLists event
 POST /api/collect/reset          → reset collect workflow to idle
 
 POST /api/update/start           → { collectionFile, actions[], dryRun? } — write action file, launch update workflow (dryRun forced true if server started with DRY_RUN=true)
@@ -163,6 +168,7 @@ Browser tab                         Server
     │         [Playwright runs in background]
     │                                  │
     │ ◀── event: place ──────────────── │  each scraped place (collect)
+    │ ◀── event: savedLists ─────────── │  full list of saved-list names (collect, browse-lists)
     │ ◀── event: progress ───────────── │  per-item progress (update)
     │ ◀── event: error ──────────────── │  per-item failure (update)
     │ ◀── event: dryRunAction ────────── │  dry-run log entry (update)
@@ -180,6 +186,8 @@ Navigation to Google Maps is broken into composable, reusable steps in `src/play
 | `browser.ts` | `getBrowserContext()` | Creates/reuses the persistent Chromium profile in `browser-data/` |
 | `open-saved-lists.ts` | `(context) → Page` | Navigates to Maps and opens the saved-lists panel |
 | `open-list-by-name.ts` | `(page, listName) → Page` | Clicks a named list in the panel |
+| `saved-list-names.ts` | `scrapeSavedListNames(page)`, `writeSavedListNames(dir, names)` | Reads list names from the open saved-lists panel and persists them |
+| `browse-saved-lists.ts` | `(context) → void` | Standalone flow: open saved lists, scrape names only, write JSON, broadcast — used by the "Browse My Lists" picker |
 | `get-place-details.ts` | `(page, placeName) → PlaceDetails` | Clicks a place, scrapes name/address/note |
 | `remove-place-from-list.ts` | `(page, placeName) → Page` | Hovers to reveal the delete button and removes the place |
 | `move-place-to-list.ts` | `(page, placeName, src, dest) → Page` | Moves a place between lists via the Saved dropdown |

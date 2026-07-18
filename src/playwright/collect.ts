@@ -6,25 +6,10 @@ import { setCollectState, broadcast } from '../state.ts';
 import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
-
-const SAVED_LISTS_FILE = 'saved-lists.json';
+import { scrapeSavedListNames, writeSavedListNames } from './saved-list-names.ts';
 
 const DATA_DIR = join(process.cwd(), 'output', 'data');
 const LOGS_DIR = join(process.cwd(), 'output', 'logs');
-
-// List name is in .fontBodyLarge inside each list button; other text in the button
-// (author, sharing status) lives in sibling elements and is intentionally excluded.
-async function scrapeSavedListNames(page: Page): Promise<string[]> {
-  const nameEls = page.locator('button .fontBodyLarge');
-  await nameEls.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
-  const count = await nameEls.count();
-  const names: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const text = (await nameEls.nth(i).textContent())?.trim();
-    if (text) names.push(text);
-  }
-  return names;
-}
 
 function safeFileName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, '_');
@@ -69,7 +54,8 @@ export async function collectList(
     try {
       const allListNames = await scrapeSavedListNames(page);
       if (allListNames.length > 0) {
-        await Bun.write(join(DATA_DIR, SAVED_LISTS_FILE), JSON.stringify(allListNames, null, 2));
+        await writeSavedListNames(DATA_DIR, allListNames);
+        broadcast('savedLists', allListNames);
       }
     } catch {
       // Selector drift — list name discovery skipped this run.
