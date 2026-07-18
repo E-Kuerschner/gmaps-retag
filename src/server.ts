@@ -4,6 +4,7 @@ import { getState, setCollectState, setUpdateState, addSSEClient, removeSSEClien
 import { getBrowserContext, closeBrowser } from './playwright/browser.ts';
 import { collectList } from './playwright/collect.ts';
 import { performUpdates } from './playwright/update.ts';
+import { isDryRun } from './config.ts';
 import type { PlaceAction, ActionFile, CollectedList } from './types.ts';
 
 const PUBLIC_DIR = join(import.meta.dir, '..', 'public');
@@ -143,8 +144,9 @@ const server = Bun.serve({
 
     // ── POST /api/update/start  (create action file + launch update workflow) ─
     if (pathname === '/api/update/start' && method === 'POST') {
-      const body = (await req.json()) as { collectionFile?: string; actions?: PlaceAction[] };
+      const body = (await req.json()) as { collectionFile?: string; actions?: PlaceAction[]; dryRun?: boolean };
       const { collectionFile, actions = [] } = body;
+      const dryRun = isDryRun || body.dryRun === true;
 
       if (!collectionFile) return json({ error: 'collectionFile is required' }, 400);
 
@@ -170,10 +172,10 @@ const server = Bun.serve({
       };
       await Bun.write(actionFilePath, JSON.stringify(actionData, null, 2));
 
-      setUpdateState({ status: 'running', message: 'Starting update…', progress: undefined });
+      setUpdateState({ status: 'running', message: 'Starting update…', progress: undefined, dryRun });
 
       getBrowserContext()
-        .then((ctx) => performUpdates(ctx, actionFilePath))
+        .then((ctx) => performUpdates(ctx, actionFilePath, dryRun))
         .catch((err: unknown) => {
           setUpdateState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
         });

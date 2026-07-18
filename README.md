@@ -49,11 +49,13 @@ The collection page shows every place with its address and note. For each place 
 
 **Step 3 — Update** (same page)
 
-Click _Start Update_. The browser navigates back to Maps and applies every marked change. Progress is shown inline; individual failures are logged without stopping the rest of the run. The actions file is written to `output/` for reference.
+Check _Dry run_ if you just want to validate selectors without touching real data, then click _Start Update_. The browser navigates back to Maps and applies every marked change. Progress is shown inline; individual failures are logged without stopping the rest of the run. The actions file is written to `output/` for reference.
 
 ### Dry-run mode
 
-Start the server with `DRY_RUN=true` (or use the `dev:dry` / `start:dry` scripts). The browser navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. An amber banner appears on all pages and the collection page logs what _would_ have been applied. Use this to validate selectors before touching real data.
+Dry run is a per-update choice, not a server-wide setting: tick the _Dry run_ checkbox above the action table before clicking _Start Update_. The browser navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. An amber banner appears on the collection page and it logs what _would_ have been applied instead of applying it.
+
+Starting the server with `DRY_RUN=true` (or the `dev:dry` / `start:dry` scripts) forces every update to run as a dry run regardless of the checkbox — the checkbox is shown checked and disabled in that case. Use the env var for a server that should never write to Maps (e.g. a staging setup); use the per-update checkbox to validate a specific run on an otherwise live server.
 
 ## Output files
 
@@ -138,7 +140,7 @@ POST /api/log-error              → { message } — write a client-side error e
 POST /api/collect/start          → { listName } — launch collect workflow
 POST /api/collect/reset          → reset collect workflow to idle
 
-POST /api/update/start           → { collectionFile, actions[] } — write action file, launch update workflow
+POST /api/update/start           → { collectionFile, actions[], dryRun? } — write action file, launch update workflow (dryRun forced true if server started with DRY_RUN=true)
 POST /api/update/reset           → reset update workflow to idle
 
 POST /api/reset                  → reset both workflows to idle

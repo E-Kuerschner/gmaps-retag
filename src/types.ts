@@ -42,6 +42,7 @@ export interface UpdateWorkflow {
   message?: string;
   progress?: { current: number; total: number };
   errorCount?: number;
+  dryRun?: boolean;
 }
 
 export interface AppState {

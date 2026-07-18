@@ -48,10 +48,16 @@
           <span id="review-list-name" class="text-blue-600"></span>
           <span id="review-count" class="ml-2 text-sm text-gray-400"></span>
         </h2>
-        <button id="start-update-btn"
-          class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors">
-          Start Update
-        </button>
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" id="dry-run-toggle" class="rounded border-gray-300" />
+            Dry run (validate only, no changes)
+          </label>
+          <button id="start-update-btn"
+            class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors">
+            Start Update
+          </button>
+        </div>
       </div>
 
       <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -288,10 +294,12 @@
       updatingThisSession = true;
       showSection('section-updating');
 
+      const dryRun = document.getElementById('dry-run-toggle').checked;
+
       const res = await fetch('/api/update/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ collectionFile: fileName, actions }),
+        body: JSON.stringify({ collectionFile: fileName, actions, dryRun }),
       });
 
       if (!res.ok) {
@@ -314,7 +322,14 @@
 
     // ── SSE ──────────────────────────────────────────────────────────────────
     function applyState(state) {
-      document.getElementById('dry-run-banner').classList.toggle('hidden', !state.dryRun);
+      const toggle = document.getElementById('dry-run-toggle');
+      if (state.dryRun) {
+        toggle.checked = true;
+        toggle.disabled = true;
+        toggle.title = 'Server is running with DRY_RUN=true — every update runs as a dry run.';
+      }
+      const dryRunActive = state.dryRun || (updatingThisSession && state.update.dryRun);
+      document.getElementById('dry-run-banner').classList.toggle('hidden', !dryRunActive);
       if (!updatingThisSession) return;
 
       const { update } = state;
