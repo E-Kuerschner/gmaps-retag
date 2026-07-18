@@ -35,7 +35,7 @@
 
     <!-- ── Idle: start form ──────────────────────────────────────────────── -->
     <section id="section-idle" class="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-      <h2 class="font-medium text-gray-900 mb-4">Start a new collection</h2>
+      <h2 class="font-medium text-gray-900 mb-4">Import a new list</h2>
       <form id="collect-form" class="flex gap-3">
         <input
           id="list-name"
@@ -48,7 +48,7 @@
           type="submit"
           class="rounded-lg bg-blue-600 text-white px-5 py-2 text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
-          Start Collection
+          Import List
         </button>
       </form>
 
@@ -67,15 +67,21 @@
       </div>
 
       <p class="text-xs text-gray-400 mt-3">
-        A browser window will open. Sign into Google Maps if prompted, then
-        the tool will navigate and collect automatically.
+        Enter the exact name of one of your Google Maps saved lists. A browser window
+        will open — sign into Google Maps if prompted — and every place in that list will
+        be scraped and imported here for review.
       </p>
     </section>
 
     <!-- ── Past collections ──────────────────────────────────────────────── -->
     <section id="past-collections" class="hidden bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
-        <h3 class="text-sm font-medium text-gray-700">Past collections</h3>
+        <h3 class="text-sm font-medium text-gray-700">Imported lists</h3>
+        <p class="text-xs text-gray-400 mt-1">
+          Lists already imported below reflect a snapshot from their last sync — changes made
+          in Google Maps since then won't show up here. If it's been a while, re-import a list
+          by name above to refresh it before reviewing changes.
+        </p>
       </div>
       <ul id="past-collections-list" class="divide-y divide-gray-100 text-sm"></ul>
     </section>
@@ -188,18 +194,26 @@
         return;
       }
 
+      const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
       list.innerHTML = '';
       files.forEach(({ fileName, listName, lastUpdated }) => {
         const updatedLabel = lastUpdated
           ? new Date(lastUpdated).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
           : '';
+        const isStale = lastUpdated && (Date.now() - new Date(lastUpdated).getTime()) > STALE_AFTER_MS;
         const li = document.createElement('li');
         li.className = 'flex items-center justify-between px-4 py-3';
         li.innerHTML = `
           <a href="/collections/${encodeURIComponent(fileName)}"
              class="text-blue-600 hover:underline font-medium text-sm truncate mr-4">${escHtml(listName || fileName)}</a>
           <div class="flex items-center gap-4 shrink-0">
-            ${updatedLabel ? `<span class="text-xs text-gray-400">${escHtml(updatedLabel)}</span>` : ''}
+            ${updatedLabel
+              ? `<span class="text-xs ${isStale ? 'text-amber-600' : 'text-gray-400'}" title="${isStale ? 'It has been over a week since this list was last synced — re-import to see recent changes.' : ''}">
+                   Last synced ${escHtml(updatedLabel)}${isStale ? ' · re-sync recommended' : ''}
+                 </span>`
+              : ''
+            }
             <button class="delete-btn text-red-500 hover:text-red-700 text-xs font-medium"
                     data-file="${escHtml(fileName)}">Delete</button>
           </div>

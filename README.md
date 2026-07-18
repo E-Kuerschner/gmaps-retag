@@ -31,7 +31,7 @@ Open **http://localhost:3000** in your browser.
 
 ```
 /                         Home
-└── /collect              Collect — start a new collection or browse past ones
+└── /collect              Collect — import a new list or browse previously imported ones
     └── /collections/:f   Collection — review places, assign actions, run update
 ```
 
@@ -41,7 +41,9 @@ Each collection is a permanent URL. Browser back and forward work naturally thro
 
 **Step 1 — Collect** (`/collect`)
 
-Enter the name of a Google Maps saved list and click _Start Collection_. A browser window opens, navigates to Google Maps, and first captures the names of all your saved lists (written to `output/saved-lists.json` for use in the _Move to…_ dropdown). It then opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
+Enter the exact name of a Google Maps saved list and click _Import List_. A browser window opens, navigates to Google Maps, and first captures the names of all your saved lists (written to `output/saved-lists.json` for use in the _Move to…_ dropdown). It then opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
+
+Previously imported lists appear below the form with a "Last synced" timestamp — since each is a point-in-time snapshot, re-import a list by name to refresh it if it's been a while (the page flags anything older than a week and suggests a re-sync).
 
 **Step 2 — Review** (`/collections/:fileName`)
 
