@@ -14,6 +14,9 @@
 
 import { type Page } from 'playwright';
 import { openPlacePanel, closeMembershipDropdown } from './open-place-panel.ts';
+import { resetToSavedListsPanel } from './open-saved-lists.ts';
+import { openListByName } from './open-list-by-name.ts';
+import { logMutation } from '../logger.ts';
 
 export type RemoveOutcome = 'removed' | 'not-in-list';
 
@@ -71,6 +74,9 @@ export async function removePlaceFromList(
   if (!isMember) {
     // Don't click — it's already unchecked, so clicking would add it instead of removing it.
     await closeMembershipDropdown(page);
+    await resetToSavedListsPanel(page);
+    await openListByName(page, listName);
+    await page.waitForTimeout(2_000);
     return 'not-in-list';
   }
 
@@ -79,5 +85,16 @@ export async function removePlaceFromList(
   // caller potentially closes the page/browser — closing too soon after the click
   // can cancel the in-flight request and silently drop the change.
   await page.waitForTimeout(1_000);
+  // Logged after the settle wait, so the entry only exists once the change is committed.
+  logMutation({ op: 'remove-from-list', place: placeName, list: listName });
+
+  // Leave the page back on listName's feed rather than on this place's panel with its
+  // dropdown still open. Clicking a radio doesn't dismiss the menu, and a leftover open
+  // panel poisons the *next* place's run: openPlacePanel's already-open check matches the
+  // stale panel, so the next place reads this place's dropdown state instead of its own.
+  await closeMembershipDropdown(page);
+  await resetToSavedListsPanel(page);
+  await openListByName(page, listName);
+  await page.waitForTimeout(2_000);
   return 'removed';
 }

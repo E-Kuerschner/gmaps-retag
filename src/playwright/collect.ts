@@ -1,8 +1,9 @@
 import { type BrowserContext, type Page } from 'playwright';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
-import type { Place, CollectedList, ErrorEntry } from '../types.ts';
+import type { Place, CollectedList } from '../types.ts';
 import { setCollectState, broadcast } from '../state.ts';
+import { logInfo, logError } from '../logger.ts';
 import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
@@ -10,22 +11,9 @@ import { scrapeSavedListNames, writeSavedListNames } from './saved-list-names.ts
 import { isCancelRequested, CancelledError } from './cancel.ts';
 
 const DATA_DIR = join(process.cwd(), 'output', 'data');
-const LOGS_DIR = join(process.cwd(), 'output', 'logs');
 
 function safeFileName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, '_');
-}
-
-function timestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-');
-}
-
-async function saveErrors(errors: ErrorEntry[], ts: string): Promise<void> {
-  if (errors.length === 0) return;
-  mkdirSync(LOGS_DIR, { recursive: true });
-  const path = join(LOGS_DIR, `errors_${ts}.json`);
-  await Bun.write(path, JSON.stringify(errors, null, 2));
-  console.error(`[collect] ${errors.length} error(s) written to ${path}`);
 }
 
 export async function collectList(
@@ -35,11 +23,10 @@ export async function collectList(
   mkdirSync(DATA_DIR, { recursive: true });
 
   let page: Page | undefined;
-  const errors: ErrorEntry[] = [];
   const places: Place[] = [];
-  const ts = timestamp();
 
   try {
+    logInfo(`Collect run started on list "${listName}"`, { listName });
     setCollectState({ status: 'running', listName, message: 'Opening Google Maps…' });
 
     setCollectState({ message: 'Waiting for Google Maps to load. Please log in if prompted.' });
@@ -134,12 +121,11 @@ export async function collectList(
         places.push(place);
         broadcast('place', place);
       } catch {
-        errors.push({
-          location: `Item ${i + 1} of ${total} in list "${listName}"`,
-          step: 'read name',
-          problem: `Name element (.fontHeadlineSmall) not found inside place button at index ${i} — the button selector may have drifted or the card structure changed`,
-          timestamp: new Date().toISOString(),
-        });
+        logError(
+          `Could not read place name at index ${i} (item ${i + 1} of ${total}) in list "${listName}" — ` +
+            'the .fontHeadlineSmall selector may have drifted or the card structure changed',
+          { listName, index: i, step: 'read name' },
+        );
       }
     }
 
@@ -151,15 +137,14 @@ export async function collectList(
       places,
     };
     await Bun.write(outputFile, JSON.stringify(data, null, 2));
-    await saveErrors(errors, ts);
 
+    logInfo(`Collect run finished on list "${listName}"`, { listName, places: places.length });
     setCollectState({ status: 'done', outputFile: outputFileName, message: `Collected ${places.length} place(s).` });
     return outputFile;
   } catch (err) {
     const finalErr = isCancelRequested() ? new CancelledError() : err instanceof Error ? err : new Error(String(err));
     const message = finalErr.message;
-    errors.push({ location: `list "${listName}"`, problem: message, timestamp: new Date().toISOString() });
-    await saveErrors(errors, ts);
+    logError(`Collect run aborted on list "${listName}": ${message}`, { listName });
     setCollectState({ status: 'error', message });
     throw finalErr;
   } finally {

@@ -1,8 +1,9 @@
 import { type BrowserContext, type Page } from 'playwright';
-import { join } from 'path';
-import { mkdirSync } from 'fs';
-import type { ActionFile, ErrorEntry } from '../types.ts';
+import { unlinkSync } from 'fs';
+import { basename } from 'path';
+import type { ActionFile } from '../types.ts';
 import { setUpdateState, broadcast } from '../state.ts';
+import { logInfo, logError, getSessionLogPath } from '../logger.ts';
 import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
@@ -10,29 +11,17 @@ import { movePlaceToList } from './move-place-to-list.ts';
 import { copyPlaceToList } from './copy-place-to-list.ts';
 import { removePlaceFromList } from './remove-place-from-list.ts';
 import { placeButtonName } from './open-place-panel.ts';
-
-const LOGS_DIR = join(process.cwd(), 'output', 'logs');
-
-function timestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-');
-}
-
-async function saveErrors(errors: ErrorEntry[], ts: string): Promise<void> {
-  if (errors.length === 0) return;
-  mkdirSync(LOGS_DIR, { recursive: true });
-  const path = join(LOGS_DIR, `errors_${ts}.json`);
-  await Bun.write(path, JSON.stringify(errors, null, 2));
-  console.error(`[update] ${errors.length} error(s) written to ${path}`);
-}
+import { isCancelRequested, CancelledError } from './cancel.ts';
 
 export async function performUpdates(
   context: BrowserContext,
   actionFilePath: string,
   dryRun: boolean,
 ): Promise<void> {
-  const ts = timestamp();
-  const errors: ErrorEntry[] = [];
+  let errorCount = 0;
   let skipped = 0;
+  /** Actions the loop got all the way through — used to report how far a cancelled run got. */
+  let completedCount = 0;
 
   const raw = await Bun.file(actionFilePath).text();
   const data: ActionFile = JSON.parse(raw);
@@ -41,6 +30,14 @@ export async function performUpdates(
   let page: Page | undefined;
 
   try {
+    // The intended actions are recorded here so the action file itself becomes
+    // disposable — it is deleted once the run ends (see the finally block).
+    logInfo(`${dryRun ? '[DRY RUN] ' : ''}Update run started on list "${listName}"`, {
+      dryRun,
+      listName,
+      actions,
+    });
+
     setUpdateState({
       status: 'running',
       message: `${dryRun ? '[DRY RUN] ' : ''}Opening Google Maps…`,
@@ -64,7 +61,19 @@ export async function performUpdates(
 
     await page.waitForTimeout(2_000);
 
+    // Skips are a real outcome, not a non-event: without a record of them there is no way
+    // to tell afterwards whether an action was applied or quietly passed over.
+    const skip = (name: string, reason: string) => {
+      skipped++;
+      logInfo(`Skipped "${name}": ${reason}`, { place: name, list: listName });
+      broadcast('skipped', { name, reason });
+    };
+
     for (let i = 0; i < actions.length; i++) {
+      // Checked between actions so a cancellation lands on a clean boundary rather than
+      // partway through one — matching the loop checks in collect.ts.
+      if (isCancelRequested()) throw new CancelledError();
+
       const action = actions[i];
       const label = `${dryRun ? '[DRY RUN] ' : ''}Processing ${i + 1}/${actions.length}: ${action.name}`;
       setUpdateState({ message: label, progress: { current: i + 1, total: actions.length } });
@@ -79,10 +88,7 @@ export async function performUpdates(
             .then(() => true)
             .catch(() => false);
           if (!isPresent) {
-            skipped++;
-            const reason = `"${action.name}" is no longer in "${listName}" (list may be out of sync) — would skip.`;
-            console.log(`[dry-run] ${reason}`);
-            broadcast('skipped', { name: action.name, reason });
+            skip(action.name, `no longer in "${listName}" (list may be out of sync) — would skip.`);
           } else {
             const noteSuffix = action.note ? ' and append its note' : '';
             const wouldDo = action.action === 'move'
@@ -90,77 +96,108 @@ export async function performUpdates(
               : action.action === 'copy'
                 ? `add to "${action.targetList}"${noteSuffix} (keeping it in "${listName}")`
                 : `remove from "${listName}"`;
-            console.log(`[dry-run] Would ${wouldDo}: ${action.name}`);
+            logInfo(`[DRY RUN] Would ${wouldDo}: "${action.name}"`, { place: action.name, list: listName });
             broadcast('dryRunAction', { name: action.name, action: action.action, targetList: action.targetList });
           }
         } else if (action.action === 'move') {
           const outcome = await movePlaceToList(page!, action.name, listName, action.targetList!, action.note);
           if (outcome === 'not-in-source') {
-            skipped++;
-            broadcast('skipped', {
-              name: action.name,
-              reason: `"${action.name}" is no longer in "${listName}" (list may be out of sync) — skipped.`,
-            });
+            skip(action.name, `no longer in "${listName}" (list may be out of sync) — skipped.`);
           } else if (outcome === 'already-in-target') {
-            skipped++;
-            broadcast('skipped', {
-              name: action.name,
-              reason: `"${action.name}" was already in "${action.targetList}" — removed from "${listName}" without re-adding${action.note ? ' (note still appended)' : ''}.`,
-            });
+            skip(
+              action.name,
+              `was already in "${action.targetList}" — removed from "${listName}" without re-adding${action.note ? ' (note still appended)' : ''}.`,
+            );
           }
         } else if (action.action === 'copy') {
           const outcome = await copyPlaceToList(page!, action.name, listName, action.targetList!, action.note);
           if (outcome === 'not-in-source') {
-            skipped++;
-            broadcast('skipped', {
-              name: action.name,
-              reason: `"${action.name}" is no longer in "${listName}" (list may be out of sync) — skipped.`,
-            });
+            skip(action.name, `no longer in "${listName}" (list may be out of sync) — skipped.`);
           } else if (outcome === 'already-in-target') {
-            skipped++;
-            broadcast('skipped', {
-              name: action.name,
-              reason: `"${action.name}" was already in "${action.targetList}" — nothing to add${action.note ? ' (note still appended)' : ''}.`,
-            });
+            skip(
+              action.name,
+              `was already in "${action.targetList}" — nothing to add${action.note ? ' (note still appended)' : ''}.`,
+            );
           }
         } else {
           const outcome = await removePlaceFromList(page!, action.name, listName);
           if (outcome === 'not-in-list') {
-            skipped++;
-            broadcast('skipped', {
-              name: action.name,
-              reason: `"${action.name}" is no longer in "${listName}" (list may be out of sync) — skipped.`,
-            });
+            skip(action.name, `no longer in "${listName}" (list may be out of sync) — skipped.`);
           }
         }
+        completedCount++;
       } catch (err) {
-        errors.push({
-          location: `"${action.name}" in list "${listName}"`,
-          problem: err instanceof Error ? err.message : String(err),
-          timestamp: new Date().toISOString(),
+        // Cancelling force-closes the browser, which makes whatever Playwright call was
+        // in flight reject. That rejection lands here, but it is not a failure of this
+        // action — recording it as one would log a bogus error for the action being
+        // cancelled, plus one for every action after it as the loop kept going.
+        if (isCancelRequested()) throw new CancelledError();
+
+        errorCount++;
+        const problem = err instanceof Error ? err.message : String(err);
+        logError(`Failed on "${action.name}" in list "${listName}": ${problem}`, {
+          place: action.name,
+          list: listName,
+          action: action.action,
         });
-        broadcast('error', { name: action.name, problem: errors[errors.length - 1].problem });
+        broadcast('error', { name: action.name, problem });
       }
     }
 
-    await saveErrors(errors, ts);
-
+    const logName = basename(getSessionLogPath());
     const skippedNote = skipped > 0 ? ` (${skipped} skipped as already up to date)` : '';
     const doneMessage = dryRun
-      ? `Dry run complete. ${actions.length - errors.length}/${actions.length} selector(s) validated${skippedNote}. No changes were made.`
-      : errors.length > 0
-        ? `Done. ${actions.length - errors.length}/${actions.length} succeeded${skippedNote}. Check logs/errors_${ts}.json for failures.`
+      ? `Dry run complete. ${actions.length - errorCount}/${actions.length} selector(s) validated${skippedNote}. No changes were made.`
+      : errorCount > 0
+        ? `Done. ${actions.length - errorCount}/${actions.length} succeeded${skippedNote}. Check logs/${logName} for failures.`
         : `All ${actions.length} update(s) completed successfully${skippedNote}.`;
 
-    setUpdateState({ status: 'done', message: doneMessage, errorCount: errors.length, skippedCount: skipped });
+    logInfo(`Update run finished on list "${listName}"`, {
+      dryRun,
+      listName,
+      total: actions.length,
+      failed: errorCount,
+      skipped,
+    });
+
+    setUpdateState({ status: 'done', message: doneMessage, errorCount, skippedCount: skipped });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    errors.push({ location: `list "${listName}"`, problem: message, timestamp: new Date().toISOString() });
-    await saveErrors(errors, ts);
+    const finalErr = isCancelRequested()
+      ? new CancelledError()
+      : err instanceof Error
+        ? err
+        : new Error(String(err));
+
+    // Unlike a cancelled collect, which only ever read, a cancelled update may already
+    // have written to Maps. Record how far it got — the mutations themselves are already
+    // in the log above this entry, and this marks where they stop.
+    logError(`Update run aborted on list "${listName}": ${finalErr.message}`, {
+      listName,
+      cancelled: finalErr instanceof CancelledError,
+      completed: completedCount,
+      total: actions.length,
+    });
+
+    const message =
+      finalErr instanceof CancelledError && completedCount > 0
+        ? `Cancelled by user after ${completedCount} of ${actions.length} action(s). Changes already made were not undone.`
+        : finalErr.message;
+
     setUpdateState({ status: 'error', message });
-    throw err;
+    throw finalErr;
   } finally {
-    await page?.close();
+    // The action file only ever described intent, and that intent is now in the session
+    // log — so it has no reason to outlive the run. Deleted on every exit path, including
+    // failure and cancellation: a retry posts a fresh set of actions rather than reusing
+    // this file, so keeping it around would only accumulate dead files.
+    try {
+      unlinkSync(actionFilePath);
+    } catch {
+      // Already gone, or never written — nothing to clean up.
+    }
+    // Failing to close the page must not skip closeBrowser() — that was how a dead
+    // context got left cached, hanging every subsequent run.
+    await page?.close().catch(() => {});
     await closeBrowser();
   }
 }

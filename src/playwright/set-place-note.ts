@@ -13,6 +13,7 @@
  */
 
 import { type Page } from 'playwright';
+import { logMutation } from '../logger.ts';
 
 export type SetNoteOutcome = 'set' | 'appended' | 'not-found';
 
@@ -30,6 +31,9 @@ export async function appendPlaceNote(
   page: Page,
   placeName: string,
   noteToAdd: string,
+  /** The currently open list. Not used to find anything — only to identify which list's
+   *  note was written in the mutation log, since that log is what an undo would read. */
+  listName?: string,
 ): Promise<SetNoteOutcome> {
   // BRITTLE: DxyBCb is the unique class on the outer scroll container — same one
   // collect.ts uses to find the feed. If scrolling/scraping selectors there stop
@@ -79,6 +83,17 @@ export async function appendPlaceNote(
   // navigates away or closes the browser — same reasoning as the settle waits in
   // copy-place-to-list.ts / remove-place-from-list.ts.
   await page.waitForTimeout(1_000);
+
+  // Logged after the settle wait, so the entry only exists once the change is committed.
+  // `previousNote` is the sole record of what the note said beforehand — Maps keeps no
+  // history, and the collect snapshot is overwritten on every re-sync.
+  logMutation({
+    op: 'append-note',
+    place: placeName,
+    list: listName ?? '(current list)',
+    previousNote: existing || null,
+    newNote: combined,
+  });
 
   return existing ? 'appended' : 'set';
 }

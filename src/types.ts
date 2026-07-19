@@ -25,11 +25,25 @@ export interface ActionFile {
   actions: PlaceAction[];
 }
 
-export interface ErrorEntry {
-  location: string;
-  step?: string;
-  problem: string;
+export type LogLevel = 'info' | 'error';
+
+/**
+ * A write made to Google Maps, recorded at the atomic level at which it can be reversed.
+ * Every variant carries enough to build its own inverse: an add is undone by a remove,
+ * a remove by an add, and a note append by restoring `previousNote`.
+ */
+export type Mutation =
+  | { op: 'add-to-list'; place: string; list: string }
+  | { op: 'remove-from-list'; place: string; list: string }
+  | { op: 'append-note'; place: string; list: string; previousNote: string | null; newNote: string };
+
+export interface LogEntry {
   timestamp: string;
+  level: LogLevel;
+  message: string;
+  /** Present only on entries recording an actual change to a saved list. */
+  mutation?: Mutation;
+  context?: Record<string, unknown>;
 }
 
 export interface CollectWorkflow {

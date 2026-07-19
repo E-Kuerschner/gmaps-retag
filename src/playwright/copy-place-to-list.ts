@@ -17,6 +17,7 @@ import { openPlacePanel, closeMembershipDropdown } from './open-place-panel.ts';
 import { resetToSavedListsPanel } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 import { appendPlaceNote } from './set-place-note.ts';
+import { logMutation } from '../logger.ts';
 
 export type CopyOutcome = 'copied' | 'already-in-target' | 'not-in-source';
 
@@ -88,20 +89,31 @@ export async function copyPlaceToList(
     // note-copying step below navigates away — navigating too soon after the click can
     // cancel the in-flight request and silently drop the change.
     await page.waitForTimeout(1_000);
+    // Logged after the settle wait, so the entry only exists once the change is committed.
+    logMutation({ op: 'add-to-list', place: placeName, list: destinationListName });
+    // Clicking a radio does not dismiss the menu, so close it explicitly — the same
+    // cleanup the already-checked branch above does.
+    await closeMembershipDropdown(page);
   }
 
   if (note) {
     // Notes live on the list's own feed (see set-place-note.ts), not the place panel we
-    // currently have open — switch views to reach it, then switch back so the caller
-    // finds sourceListName's feed open again, matching this function's precondition.
+    // currently have open — switch views to reach it.
     await resetToSavedListsPanel(page);
     await openListByName(page, destinationListName);
     await page.waitForTimeout(2_000);
-    await appendPlaceNote(page, placeName, note);
-    await resetToSavedListsPanel(page);
-    await openListByName(page, sourceListName);
-    await page.waitForTimeout(2_000);
+    await appendPlaceNote(page, placeName, note, destinationListName);
   }
+
+  // Return to sourceListName's feed on every path, note or not. Leaving this place's
+  // panel open poisons the *next* place's run: openPlacePanel's already-open check matches
+  // the leftover panel, so the next place never opens its own and ends up reading this
+  // place's dropdown state. That is what made a copy queued right after a move report
+  // 'already-in-target' and skip — the copy was reading the moved place's dropdown, where
+  // the destination had just been checked.
+  await resetToSavedListsPanel(page);
+  await openListByName(page, sourceListName);
+  await page.waitForTimeout(2_000);
 
   return alreadyInTarget ? 'already-in-target' : 'copied';
 }

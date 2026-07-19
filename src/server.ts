@@ -7,14 +7,13 @@ import { browseSavedLists } from './playwright/browse-saved-lists.ts';
 import { performUpdates } from './playwright/update.ts';
 import { resetCancel, requestCancel, isCancelRequested } from './playwright/cancel.ts';
 import { isDryRun } from './config.ts';
+import { logInfo, logError, getSessionLogPath } from './logger.ts';
 import type { PlaceAction, ActionFile, CollectedList } from './types.ts';
 
 const PUBLIC_DIR = join(import.meta.dir, '..', 'public');
 const DATA_DIR = join(process.cwd(), 'output', 'data');
-const LOGS_DIR = join(process.cwd(), 'output', 'logs');
 
 mkdirSync(DATA_DIR, { recursive: true });
-mkdirSync(LOGS_DIR, { recursive: true });
 
 function html(path: string): Response {
   return new Response(Bun.file(join(PUBLIC_DIR, path)), {
@@ -70,6 +69,18 @@ const server = Bun.serve({
     // ── Static pages ─────────────────────────────────────────────────────────
     if (pathname === '/') return html('collect.html');
     if (pathname.startsWith('/collections/')) return html('collection.html');
+
+    // ── Static assets ────────────────────────────────────────────────────────
+    // Matched by exact path rather than by serving PUBLIC_DIR wholesale, so
+    // there is no path-traversal surface to get wrong.
+    if (pathname === '/map-background.jpg') {
+      return new Response(Bun.file(join(PUBLIC_DIR, 'map-background.jpg')), {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'Cache-Control': 'public, max-age=86400',
+        },
+      });
+    }
 
     // ── SSE stream ───────────────────────────────────────────────────────────
     if (pathname === '/api/events') return makeSSEResponse();
@@ -136,13 +147,20 @@ const server = Bun.serve({
       getBrowserContext()
         .then((ctx) => {
           if (isCancelRequested()) {
+            logInfo(`Collect run on list "${listName}" cancelled by user before it began`);
             setCollectState({ status: 'error', message: 'Cancelled by user.' });
             return;
           }
           return collectList(ctx, listName);
         })
         .catch((err: unknown) => {
-          setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+          // collectList logs its own failures and sets the error state before rethrowing,
+          // so reaching here with a non-error status means it never ran at all — e.g. the
+          // browser failed to launch. Guarding on that avoids logging the same failure twice.
+          if (getState().collect.status === 'error') return;
+          const message = err instanceof Error ? err.message : String(err);
+          logError(`Collect run failed to start on list "${listName}": ${message}`);
+          setCollectState({ status: 'error', message });
         });
 
       return json({ ok: true });
@@ -160,13 +178,19 @@ const server = Bun.serve({
       getBrowserContext()
         .then((ctx) => {
           if (isCancelRequested()) {
+            logInfo('Saved-list scan cancelled by user before it began');
             setCollectState({ status: 'error', message: 'Cancelled by user.' });
             return;
           }
           return browseSavedLists(ctx);
         })
         .catch((err: unknown) => {
-          setCollectState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+          // See the note on the collect route above — this only fires when browseSavedLists
+          // never ran, since it logs and sets the error state itself before rethrowing.
+          if (getState().collect.status === 'error') return;
+          const message = err instanceof Error ? err.message : String(err);
+          logError(`Saved-list scan failed to start: ${message}`);
+          setCollectState({ status: 'error', message });
         });
 
       return json({ ok: true });
@@ -224,13 +248,37 @@ const server = Bun.serve({
       };
       await Bun.write(actionFilePath, JSON.stringify(actionData, null, 2));
 
+      // Clear any flag left set by a previous cancellation, or this run would abort
+      // immediately on its first check.
+      resetCancel();
       setUpdateState({ status: 'running', message: 'Starting update…', progress: undefined, dryRun });
 
       getBrowserContext()
         .then((ctx) => performUpdates(ctx, actionFilePath, dryRun))
         .catch((err: unknown) => {
-          setUpdateState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+          // See the note on the collect route above — this only fires when performUpdates
+          // never ran, since it logs and sets the error state itself before rethrowing.
+          if (getState().update.status === 'error') return;
+          const message = err instanceof Error ? err.message : String(err);
+          logError(`Update run failed to start on "${collectionFile}": ${message}`);
+          setUpdateState({ status: 'error', message });
         });
+
+      return json({ ok: true });
+    }
+
+    // ── POST /api/update/cancel  (force-stop an in-progress update run) ───────
+    if (pathname === '/api/update/cancel' && method === 'POST') {
+      if (getState().update.status !== 'running') {
+        return json({ error: 'No update operation is in progress' }, 409);
+      }
+
+      logInfo('Update cancellation requested by user');
+      requestCancel();
+      // Same two-pronged approach as the collect cancel above: the flag stops a run that
+      // is merely between actions, and force-closing the browser is what unblocks one
+      // stuck inside a single Playwright call.
+      await closeBrowser().catch(() => {});
 
       return json({ ok: true });
     }
@@ -245,11 +293,7 @@ const server = Bun.serve({
     if (pathname === '/api/log-error' && method === 'POST') {
       const body = (await req.json()) as { message?: string };
       const message = body.message?.trim();
-      if (message) {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        const entry = [{ location: 'client', problem: message, timestamp: new Date().toISOString() }];
-        await Bun.write(join(LOGS_DIR, `errors_${ts}.json`), JSON.stringify(entry, null, 2));
-      }
+      if (message) logError(message, { source: 'client' });
       return json({ ok: true });
     }
 
@@ -263,4 +307,6 @@ const server = Bun.serve({
   },
 });
 
-console.log(`\n  gmaps-retag running → http://localhost:${server.port}\n`);
+logInfo(`Server session started (dryRun=${isDryRun})`, { port: server.port });
+console.log(`\n  gmaps-retag running → http://localhost:${server.port}`);
+console.log(`  session log → ${getSessionLogPath()}\n`);
