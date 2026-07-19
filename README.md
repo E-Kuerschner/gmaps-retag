@@ -30,16 +30,15 @@ Open **http://localhost:3000** in your browser.
 ### Page hierarchy
 
 ```
-/                         Home
-└── /collect              Collect — import a new list or browse previously imported ones
-    └── /collections/:f   Collection — review places, assign actions, run update
+/                         Import a new list or browse previously imported ones
+└── /collections/:f       Collection — review places, assign actions, run update
 ```
 
 Each collection is a permanent URL. Browser back and forward work naturally throughout.
 
 ### Workflow
 
-**Step 1 — Collect** (`/collect`)
+**Step 1 — Collect** (`/`)
 
 Click _Scan My Saved Lists_. A browser window opens, navigates to Google Maps, and reads the names of all your saved lists — no places are scraped yet, just the list names (written to `output/saved-lists.json`, also used elsewhere for the _Move to…_ dropdown). Once it finishes, pick one from the dropdown (lists already imported are left out, since re-syncing those is handled below) and click _Import_. That runs the full import — opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
 
@@ -49,7 +48,7 @@ While a scan or import is running, a _Cancel_ button is available if it gets stu
 
 **Step 2 — Review** (`/collections/:fileName`)
 
-The collection page shows every place with its address and note. For each place choose _Keep_, _Remove_, or _Move to…_ (and type a target list name). Places you leave as _Keep_ are ignored by the update.
+The collection page shows every place with its address and note. For each place choose _Keep_, _Remove_, _Move to…_, or _Copy to…_ (the latter two need a target list name). Places you leave as _Keep_ are ignored by the update. _Move_ removes the place from the source list once it's added to the target; _Copy_ adds it to the target list while leaving it in the source list. If the place has a note, _Copy_ and _Move_ carry it over to the target list — appended after whatever note the place already has there, if any, rather than overwriting it.
 
 **Step 3 — Update** (same page)
 
@@ -63,7 +62,7 @@ Starting the server with `DRY_RUN=true` (or the `dev:dry` / `start:dry` scripts)
 
 ### Cancellation
 
-Playwright automation can hang — Maps never finishing a load, or a scroll loop that never detects it's reached the bottom. `POST /api/collect/cancel` (wired to the _Cancel_ button on `/collect`) handles this by:
+Playwright automation can hang — Maps never finishing a load, or a scroll loop that never detects it's reached the bottom. `POST /api/collect/cancel` (wired to the _Cancel_ button on `/`) handles this by:
 
 1. Setting a module-level flag (`src/playwright/cancel.ts`) that `collect.ts`, `browse-saved-lists.ts`, and `saved-list-names.ts` check between loop iterations, so a run that's merely looping stops on its next check.
 2. Force-closing the persistent Playwright browser context. This is what actually unblocks a run that's stuck *inside* a single blocking call (`page.goto`, `locator.waitFor`, etc.) — closing the context makes Playwright reject that in-flight call immediately.
@@ -116,7 +115,7 @@ State is split into two independent workflows. Each page subscribes to the part 
 ```typescript
 interface AppState {
   dryRun: boolean;
-  collect: CollectWorkflow;   // watched by /collect
+  collect: CollectWorkflow;   // watched by /
   update:  UpdateWorkflow;    // watched by /collections/:f
 }
 ```
@@ -140,8 +139,7 @@ The two workflows are independent — the collect and update Playwright processe
 ### Routing
 
 ```
-GET  /                           → index.html
-GET  /collect                    → collect.html
+GET  /                           → collect.html
 GET  /collections/:fileName      → collection.html
 
 GET  /api/events                 → SSE stream (broadcasts AppState on every mutation)
@@ -182,6 +180,7 @@ Browser tab                         Server
     │ ◀── event: progress ───────────── │  per-item progress (update)
     │ ◀── event: error ──────────────── │  per-item failure (update)
     │ ◀── event: dryRunAction ────────── │  dry-run log entry (update)
+    │ ◀── event: skipped ────────────── │  per-item action skipped as already up to date (update)
     │ ◀── event: state (done/error) ──── │  terminal state
 ```
 
@@ -194,14 +193,17 @@ Navigation to Google Maps is broken into composable, reusable steps in `src/play
 | Module | Signature | What it does |
 |---|---|---|
 | `browser.ts` | `getBrowserContext()` | Creates/reuses the persistent Chromium profile in `browser-data/` |
-| `open-saved-lists.ts` | `(context) → Page` | Navigates to Maps and opens the saved-lists panel |
-| `open-list-by-name.ts` | `(page, listName) → Page` | Clicks a named list in the panel |
+| `open-saved-lists.ts` | `(context) → Page`; also exports `resetToSavedListsPanel(page)` | Navigates to Maps and opens the saved-lists panel; the reset helper returns to that panel from any depth without a full reload, for switching between lists mid-flow |
+| `open-list-by-name.ts` | `(page, listName) → Page` | Clicks a named list in the panel — only works from the saved-lists overview |
 | `saved-list-names.ts` | `scrapeSavedListNames(page)`, `writeSavedListNames(dir, names)` | Reads list names from the open saved-lists panel and persists them |
 | `browse-saved-lists.ts` | `(context) → void` | Standalone flow: open saved lists, scrape names only, write JSON, broadcast — used by "Scan My Saved Lists" |
 | `cancel.ts` | `requestCancel()`, `isCancelRequested()`, `resetCancel()`, `CancelledError` | Cooperative cancellation flag checked by collect/browse loops — see [Cancellation](#cancellation) |
 | `get-place-details.ts` | `(page, placeName) → PlaceDetails` | Clicks a place, scrapes name/address/note |
-| `remove-place-from-list.ts` | `(page, placeName) → Page` | Hovers to reveal the delete button and removes the place |
-| `move-place-to-list.ts` | `(page, placeName, src, dest) → Page` | Moves a place between lists via the Saved dropdown |
+| `open-place-panel.ts` | `openPlacePanel(page, placeName) → OpenPlacePanelResult`; also exports `placeButtonName(placeName)`, `closeMembershipDropdown(page)` | Opens a place's detail panel and returns a Locator scoped to it, for reading/toggling its "Saved (N)" membership dropdown |
+| `set-place-note.ts` | `appendPlaceNote(page, placeName, noteToAdd) → SetNoteOutcome` | Appends text to a place's note in the currently open list's feed, creating the note if it doesn't have one |
+| `copy-place-to-list.ts` | `(page, placeName, sourceListName, destinationListName, note?) → CopyOutcome` | Adds a place to a list via the Saved dropdown, skipping the click if already a member; if `note` is given, appends it to the place's note on the destination list |
+| `remove-place-from-list.ts` | `(page, placeName, listName) → RemoveOutcome` | Removes a place from a list via the Saved dropdown, skipping the click if not a member |
+| `move-place-to-list.ts` | `(page, placeName, src, dest, note?) → MoveOutcome` | Composes copy + remove: adds to `dest` first (carrying `note` over if given), then removes from `src` |
 | `collect.ts` | `(context, listName) → string` | Full collect workflow — navigate, scroll, enrich, write JSON |
 | `update.ts` | `(context, actionFilePath) → void` | Full update workflow — navigate, apply each action |
 

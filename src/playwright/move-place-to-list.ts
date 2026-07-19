@@ -13,62 +13,30 @@
  */
 
 import { type Page } from 'playwright';
+import { copyPlaceToList } from './copy-place-to-list.ts';
+import { removePlaceFromList } from './remove-place-from-list.ts';
+
+export type MoveOutcome = 'moved' | 'already-in-target' | 'not-in-source';
 
 /**
- * Moves a saved place from sourceListName to destinationListName by deselecting the source
- * and selecting the destination in the place's list-membership dropdown.
+ * Moves a saved place from sourceListName to destinationListName by composing the two
+ * atomic dropdown-toggle steps: add to the destination first, then remove from the
+ * source — matching the order a person naturally performs it in, so a failure partway
+ * through leaves the place in both lists rather than in neither. If note is given, it's
+ * carried over to the destination's note the same way copyPlaceToList handles it
+ * (appended after whatever note is already there) — see copy-place-to-list.ts.
  */
 export async function movePlaceToList(
   page: Page,
   placeName: string,
   sourceListName: string,
   destinationListName: string,
-): Promise<Page> {
-  // UNCERTAIN: button label includes a dynamic star-rating suffix (e.g. "4.7 stars") — use partial match.
-  const placeBtn = page.getByRole('button', { name: placeName, exact: false });
-  try {
-    await placeBtn.waitFor({ state: 'visible', timeout: 15_000 });
-  } catch {
-    throw new Error(`Place button for "${placeName}" not visible in the list`);
-  }
-  await placeBtn.click();
+  note?: string | null,
+): Promise<MoveOutcome> {
+  const addResult = await copyPlaceToList(page, placeName, sourceListName, destinationListName, note);
+  if (addResult === 'not-in-source') return 'not-in-source';
 
-  // UNCERTAIN: button may read "Saved" or "Saved (4)" depending on context.
-  const savedBtn = () => page.getByRole('button', { name: /^Saved( \(\d+\))?$/ });
-  try {
-    await savedBtn().waitFor({ state: 'visible', timeout: 15_000 });
-  } catch {
-    throw new Error(`"Saved (N)" button not found for "${placeName}" after clicking the place`);
-  }
-  await savedBtn().click();
+  await removePlaceFromList(page, placeName, sourceListName);
 
-  // Deselect the source list — removes the place from it.
-  // UNCERTAIN: radio label includes a dynamic place-count suffix — use partial match.
-  const sourceRadio = page.getByRole('menuitemradio', { name: sourceListName, exact: false });
-  try {
-    await sourceRadio.waitFor({ state: 'visible', timeout: 10_000 });
-  } catch {
-    throw new Error(`Source list "${sourceListName}" not found in membership dropdown for "${placeName}"`);
-  }
-  await sourceRadio.click();
-
-  // The dropdown closes after a radio click — reopen it to select the destination.
-  try {
-    await savedBtn().waitFor({ state: 'visible', timeout: 10_000 });
-  } catch {
-    throw new Error(`"Saved (N)" button did not reappear after deselecting source list "${sourceListName}" for "${placeName}"`);
-  }
-  await savedBtn().click();
-
-  // Select the destination list — adds the place to it.
-  // UNCERTAIN: radio label includes a dynamic place-count suffix — use partial match.
-  const destRadio = page.getByRole('menuitemradio', { name: destinationListName, exact: false });
-  try {
-    await destRadio.waitFor({ state: 'visible', timeout: 10_000 });
-  } catch {
-    throw new Error(`Destination list "${destinationListName}" not found in membership dropdown for "${placeName}"`);
-  }
-  await destRadio.click();
-
-  return page;
+  return addResult === 'already-in-target' ? 'already-in-target' : 'moved';
 }

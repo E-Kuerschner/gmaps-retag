@@ -6,8 +6,10 @@ export interface Place {
 
 export interface PlaceAction {
   name: string;
-  action: 'remove' | 'move';
+  action: 'remove' | 'move' | 'copy';
   targetList?: string;
+  /** Carried over from the source collection's Place.note for 'copy'/'move' actions. */
+  note?: string | null;
 }
 
 export interface CollectedList {
@@ -42,6 +44,7 @@ export interface UpdateWorkflow {
   message?: string;
   progress?: { current: number; total: number };
   errorCount?: number;
+  skippedCount?: number;
   dryRun?: boolean;
 }
 
