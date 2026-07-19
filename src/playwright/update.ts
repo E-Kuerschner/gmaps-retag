@@ -7,7 +7,9 @@ import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 import { movePlaceToList } from './move-place-to-list.ts';
+import { copyPlaceToList } from './copy-place-to-list.ts';
 import { removePlaceFromList } from './remove-place-from-list.ts';
+import { placeButtonName } from './open-place-panel.ts';
 
 const LOGS_DIR = join(process.cwd(), 'output', 'logs');
 
@@ -30,6 +32,7 @@ export async function performUpdates(
 ): Promise<void> {
   const ts = timestamp();
   const errors: ErrorEntry[] = [];
+  let skipped = 0;
 
   const raw = await Bun.file(actionFilePath).text();
   const data: ActionFile = JSON.parse(raw);
@@ -70,21 +73,65 @@ export async function performUpdates(
       try {
         if (dryRun) {
           // Validate that the place button is present before reporting success.
-          const placeBtn = page!.getByRole('button', { name: action.name, exact: false });
-          try {
-            await placeBtn.waitFor({ state: 'visible', timeout: 15_000 });
-          } catch {
-            throw new Error(`Place button for "${action.name}" not visible in the list.`);
+          const placeBtn = page!.getByRole('button', { name: placeButtonName(action.name) });
+          const isPresent = await placeBtn
+            .waitFor({ state: 'visible', timeout: 15_000 })
+            .then(() => true)
+            .catch(() => false);
+          if (!isPresent) {
+            skipped++;
+            const reason = `"${action.name}" is no longer in "${listName}" (list may be out of sync) — would skip.`;
+            console.log(`[dry-run] ${reason}`);
+            broadcast('skipped', { name: action.name, reason });
+          } else {
+            const noteSuffix = action.note ? ' and append its note' : '';
+            const wouldDo = action.action === 'move'
+              ? `remove from "${listName}" and add to "${action.targetList}"${noteSuffix}`
+              : action.action === 'copy'
+                ? `add to "${action.targetList}"${noteSuffix} (keeping it in "${listName}")`
+                : `remove from "${listName}"`;
+            console.log(`[dry-run] Would ${wouldDo}: ${action.name}`);
+            broadcast('dryRunAction', { name: action.name, action: action.action, targetList: action.targetList });
           }
-          const wouldDo = action.action === 'move'
-            ? `remove from "${listName}" and add to "${action.targetList}"`
-            : `remove from "${listName}"`;
-          console.log(`[dry-run] Would ${wouldDo}: ${action.name}`);
-          broadcast('dryRunAction', { name: action.name, action: action.action, targetList: action.targetList });
         } else if (action.action === 'move') {
-          await movePlaceToList(page!, action.name, listName, action.targetList!);
+          const outcome = await movePlaceToList(page!, action.name, listName, action.targetList!, action.note);
+          if (outcome === 'not-in-source') {
+            skipped++;
+            broadcast('skipped', {
+              name: action.name,
+              reason: `"${action.name}" is no longer in "${listName}" (list may be out of sync) — skipped.`,
+            });
+          } else if (outcome === 'already-in-target') {
+            skipped++;
+            broadcast('skipped', {
+              name: action.name,
+              reason: `"${action.name}" was already in "${action.targetList}" — removed from "${listName}" without re-adding${action.note ? ' (note still appended)' : ''}.`,
+            });
+          }
+        } else if (action.action === 'copy') {
+          const outcome = await copyPlaceToList(page!, action.name, listName, action.targetList!, action.note);
+          if (outcome === 'not-in-source') {
+            skipped++;
+            broadcast('skipped', {
+              name: action.name,
+              reason: `"${action.name}" is no longer in "${listName}" (list may be out of sync) — skipped.`,
+            });
+          } else if (outcome === 'already-in-target') {
+            skipped++;
+            broadcast('skipped', {
+              name: action.name,
+              reason: `"${action.name}" was already in "${action.targetList}" — nothing to add${action.note ? ' (note still appended)' : ''}.`,
+            });
+          }
         } else {
-          await removePlaceFromList(page!, action.name);
+          const outcome = await removePlaceFromList(page!, action.name, listName);
+          if (outcome === 'not-in-list') {
+            skipped++;
+            broadcast('skipped', {
+              name: action.name,
+              reason: `"${action.name}" is no longer in "${listName}" (list may be out of sync) — skipped.`,
+            });
+          }
         }
       } catch (err) {
         errors.push({
@@ -98,13 +145,14 @@ export async function performUpdates(
 
     await saveErrors(errors, ts);
 
+    const skippedNote = skipped > 0 ? ` (${skipped} skipped as already up to date)` : '';
     const doneMessage = dryRun
-      ? `Dry run complete. ${actions.length - errors.length}/${actions.length} selector(s) validated. No changes were made.`
+      ? `Dry run complete. ${actions.length - errors.length}/${actions.length} selector(s) validated${skippedNote}. No changes were made.`
       : errors.length > 0
-        ? `Done. ${actions.length - errors.length}/${actions.length} succeeded. Check logs/errors_${ts}.json for failures.`
-        : `All ${actions.length} update(s) completed successfully.`;
+        ? `Done. ${actions.length - errors.length}/${actions.length} succeeded${skippedNote}. Check logs/errors_${ts}.json for failures.`
+        : `All ${actions.length} update(s) completed successfully${skippedNote}.`;
 
-    setUpdateState({ status: 'done', message: doneMessage, errorCount: errors.length });
+    setUpdateState({ status: 'done', message: doneMessage, errorCount: errors.length, skippedCount: skipped });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     errors.push({ location: `list "${listName}"`, problem: message, timestamp: new Date().toISOString() });

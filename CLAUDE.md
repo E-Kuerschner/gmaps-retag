@@ -23,29 +23,29 @@ The app is a single Bun process that serves an HTTP API + SSE stream and drives 
 ### Key files
 
 - `src/server.ts` — `Bun.serve()` entry point; all HTTP routes and SSE broadcast infrastructure
-- `src/state.ts` — singleton `AppState`; all mutation flows through `setState(partial)`, which shallow-merges and immediately broadcasts the new state to every connected SSE client
+- `src/state.ts` — singleton `AppState`; all mutation flows through `setCollectState(partial)` / `setUpdateState(partial)`, which shallow-merge into the relevant workflow slice and immediately broadcast the new state to every connected SSE client
 - `src/playwright/collect.ts` — Playwright logic for navigating Google Maps and scraping a saved list
 - `src/playwright/update.ts` — Playwright logic for applying user-confirmed actions (remove / move)
 - `src/playwright/browser.ts` — creates/reuses the persistent browser context stored in `browser-data/`
-- `src/types.ts` — all shared types (`AppState`, `AppPhase`, `Place`, `PlaceAction`, `ActionFile`)
+- `src/types.ts` — all shared types (`AppState`, `CollectWorkflow`, `UpdateWorkflow`, `Place`, `PlaceAction`, `ActionFile`)
 - `src/config.ts` — reads `DRY_RUN` env var
 
 ### Data flow
 
 1. Browser UI → `POST /api/collect/start` or `/api/update/start` → server spawns Playwright fire-and-forget and returns `200` immediately.
-2. Playwright calls `setState(...)` as it progresses → `broadcast()` enqueues the payload on every active `ReadableStreamDefaultController` in the SSE client `Set`.
+2. Playwright calls `setCollectState(...)` / `setUpdateState(...)` as it progresses → `broadcast()` enqueues the payload on every active `ReadableStreamDefaultController` in the SSE client `Set`.
 3. Browser tabs receive SSE events (`state`, `place`, `progress`, `error`, `dryRunAction`) and re-render accordingly.
 
-### Phase state machine
+### Workflow state
+
+`AppState` holds two independent workflow slices, each with its own `status`:
 
 ```
-idle → collecting → review → confirming → done
-                                       ↘ error
-idle → updating ──────────────────────→ done
-                                       ↘ error
+collect: idle → browsing | running → done ↘ error
+update:  idle → running            → done ↘ error
 ```
 
-The `phase` field in `AppState` is the discriminant; UI pages switch sections based on it.
+Each page subscribes to the slice it cares about — `/` watches `collect`, `/collections/:f` watches `update` — and switches sections based on that slice's `status`. Only one workflow may run at a time; starting a second is rejected with 409.
 
 ### Selector fragility
 

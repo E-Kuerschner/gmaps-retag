@@ -7,35 +7,77 @@
  *   import { removePlaceFromList } from './remove-place-from-list';
  *
  *   const context = await getBrowserContext();
- *   const listName = 'Fort Worth/Dallas Shared';
- *   const placeName = 'Tuscan Hen Market';
- *
  *   const page = await openSavedLists(context);
- *   await openListByName(page, listName);
- *   await removePlaceFromList(page, placeName);
+ *   await openListByName(page, 'Chicago Private');
+ *   await removePlaceFromList(page, 'Tuscan Hen Market', 'Chicago Private');
  */
 
 import { type Page } from 'playwright';
+import { openPlacePanel, closeMembershipDropdown } from './open-place-panel.ts';
 
-/** Removes a named place from the currently open saved list. */
-export async function removePlaceFromList(page: Page, placeName: string): Promise<Page> {
-  // UNCERTAIN: button label may include a dynamic star-rating suffix — use partial match.
-  const placeBtn = page.getByRole('button', { name: placeName, exact: false });
+export type RemoveOutcome = 'removed' | 'not-in-list';
+
+/**
+ * Removes a named place from listName via the Saved dropdown — the same dropdown
+ * used to add a place to a list (see copy-place-to-list.ts), just clicking an
+ * already-checked list radio instead of an unchecked one.
+ *
+ * Returns 'not-in-list' instead of throwing if the place is already absent from the
+ * page entirely, or already unchecked for listName in the dropdown — a stale collect
+ * snapshot may be out of sync with the list's current membership, and the desired
+ * end state (place not in listName) is already true.
+ */
+export async function removePlaceFromList(
+  page: Page,
+  placeName: string,
+  listName: string,
+): Promise<RemoveOutcome> {
+  const opened = await openPlacePanel(page, placeName);
+  if (opened === 'not-found') return 'not-in-list';
+
+  // Scoped to the place's own panel — the panel's "Saved (N)" button shares its
+  // accessible name ("Saved") with Maps' global nav-rail button, so this must not
+  // be a page-wide query.
+  // UNCERTAIN: button may read "Saved" or "Saved (4)" depending on context.
+  const savedBtn = opened.panel.getByRole('button', { name: /^Saved( \(\d+\))?$/ });
   try {
-    await placeBtn.waitFor({ state: 'visible', timeout: 15_000 });
+    await savedBtn.waitFor({ state: 'visible', timeout: 15_000 });
   } catch {
-    throw new Error(`Place button for "${placeName}" not visible in the list`);
+    throw new Error(`"Saved (N)" button not found for "${placeName}" after clicking the place`);
   }
-  await placeBtn.hover();
+  await savedBtn.click();
 
-  // UNCERTAIN: "Delete" label may vary by locale or Maps update; could also be "Remove".
-  const deleteBtn = page.getByRole('button', { name: /^Delete$|^Remove$/ });
+  // Deselect listName — removes the place from it.
+  // Queried page-wide rather than scoped to opened.panel: the dropdown menu renders as
+  // its own floating layer with a bounding box separate from the panel's (confirmed via
+  // accessibility-tree inspection), not nested inside the panel's DOM subtree.
+  // UNCERTAIN: radio label includes a dynamic place-count suffix — use partial match.
+  // UNCERTAIN: assumes listName isn't a prefix of another list's name (e.g. "TEST 1" vs
+  // "TEST 10") — exact:false would then match the wrong menuitemradio.
+  const listRadio = page.getByRole('menuitemradio', { name: listName, exact: false });
   try {
-    await deleteBtn.waitFor({ state: 'visible', timeout: 10_000 });
+    await listRadio.waitFor({ state: 'visible', timeout: 10_000 });
   } catch {
-    throw new Error(`Delete/Remove button did not appear after hovering "${placeName}"`);
+    throw new Error(`List "${listName}" not found in membership dropdown for "${placeName}"`);
   }
-  await deleteBtn.click();
 
-  return page;
+  // RACE CONDITION: aria-checked briefly reads a stale/default value right after the
+  // dropdown opens, before Maps' JS finishes syncing it from the place's real
+  // membership — observed reading "false" for a list the place was actually a member
+  // of. Give it a moment to settle before trusting the value.
+  await page.waitForTimeout(500);
+  // UNCERTAIN: assumes aria-checked reflects current membership as "true"/"false".
+  const isMember = (await listRadio.getAttribute('aria-checked')) === 'true';
+  if (!isMember) {
+    // Don't click — it's already unchecked, so clicking would add it instead of removing it.
+    await closeMembershipDropdown(page);
+    return 'not-in-list';
+  }
+
+  await listRadio.click();
+  // Give Maps a moment to persist the membership change over the network before a
+  // caller potentially closes the page/browser — closing too soon after the click
+  // can cancel the in-flight request and silently drop the change.
+  await page.waitForTimeout(1_000);
+  return 'removed';
 }

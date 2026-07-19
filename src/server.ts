@@ -68,8 +68,7 @@ const server = Bun.serve({
     const method = req.method;
 
     // ── Static pages ─────────────────────────────────────────────────────────
-    if (pathname === '/' || pathname === '/index.html') return html('index.html');
-    if (pathname === '/collect') return html('collect.html');
+    if (pathname === '/') return html('collect.html');
     if (pathname.startsWith('/collections/')) return html('collection.html');
 
     // ── SSE stream ───────────────────────────────────────────────────────────

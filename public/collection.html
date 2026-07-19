@@ -23,7 +23,7 @@
   </div>
 
   <header class="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4">
-    <a href="/collect" class="text-gray-400 hover:text-gray-700 transition-colors">
+    <a href="/" class="text-gray-400 hover:text-gray-700 transition-colors">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
       </svg>
@@ -53,8 +53,8 @@
             <input type="checkbox" id="dry-run-toggle" class="rounded border-gray-300" />
             Dry run (validate only, no changes)
           </label>
-          <button id="start-update-btn"
-            class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors">
+          <button id="start-update-btn" disabled
+            class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:hover:bg-green-600 disabled:cursor-not-allowed">
             Start Update
           </button>
         </div>
@@ -74,8 +74,8 @@
       </div>
 
       <div class="flex justify-end">
-        <button id="start-update-btn-bottom"
-          class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors">
+        <button id="start-update-btn-bottom" disabled
+          class="rounded-lg bg-green-600 text-white px-5 py-2 text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:hover:bg-green-600 disabled:cursor-not-allowed">
           Start Update
         </button>
       </div>
@@ -117,7 +117,7 @@
         <h2 id="done-heading" class="font-medium"></h2>
       </div>
       <p id="done-message" class="text-sm text-gray-600 mb-4"></p>
-      <a href="/collect"
+      <a href="/"
         class="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700 transition-colors">
         Back to collections
       </a>
@@ -208,6 +208,9 @@
       document.getElementById('page-subtitle').textContent = fileName;
       document.getElementById('page-subtitle').classList.remove('hidden');
 
+      // A place can't be moved/copied into the list it's already being viewed from.
+      const otherLists = savedLists.filter(l => l !== data.listName);
+
       const tbody = document.getElementById('places-table');
       tbody.innerHTML = '';
 
@@ -233,12 +236,14 @@
               <option value="keep">Keep</option>
               <option value="remove" ${place.permanentlyClosed ? 'selected' : ''}>Remove</option>
               <option value="move">Move to…</option>
+              <option value="copy">Copy to…</option>
             </select>
           </td>
           <td class="px-4 py-3">
-            ${savedLists.length > 0
+            ${otherLists.length > 0
               ? `<select data-idx="${i}" class="target-control hidden rounded border border-gray-300 text-xs px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-500">
-                   ${savedLists.map(l => `<option value="${escHtml(l)}">${escHtml(l)}</option>`).join('')}
+                   <option value=""></option>
+                   ${otherLists.map(l => `<option value="${escHtml(l)}">${escHtml(l)}</option>`).join('')}
                  </select>`
               : `<input data-idx="${i}" class="target-control hidden rounded border border-gray-300 text-xs px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="Target list name" type="text" />`
             }
@@ -251,14 +256,42 @@
         sel.addEventListener('change', () => {
           const idx = sel.dataset.idx;
           const target = tbody.querySelector(`.target-control[data-idx="${idx}"]`);
-          target.classList.toggle('hidden', sel.value !== 'move');
-          if (sel.value === 'move') target.focus();
+          const needsTarget = sel.value === 'move' || sel.value === 'copy';
+          target.classList.toggle('hidden', !needsTarget);
+          if (needsTarget) target.focus();
         });
       });
+
+      validateActions();
+    }
+
+    // ── Validation ───────────────────────────────────────────────────────────
+    // Requires at least one non-"keep" action, and a target list for every move/copy.
+    // Toggles the Start Update buttons' disabled state instead of alerting on submit.
+    function validateActions() {
+      const tbody = document.getElementById('places-table');
+      let hasAction = false;
+      let allValid = true;
+
+      for (const sel of tbody.querySelectorAll('.action-select')) {
+        if (sel.value === 'keep') continue;
+        hasAction = true;
+        if (sel.value === 'move' || sel.value === 'copy') {
+          const target = tbody.querySelector(`.target-control[data-idx="${sel.dataset.idx}"]`);
+          if (!target.value.trim()) allValid = false;
+        }
+      }
+
+      const valid = hasAction && allValid;
+      document.getElementById('start-update-btn').disabled = !valid;
+      document.getElementById('start-update-btn-bottom').disabled = !valid;
+      return valid;
     }
 
     // ── Start update ─────────────────────────────────────────────────────────
     async function startUpdate() {
+      if (!validateActions()) return;
+
       const tbody = document.getElementById('places-table');
       const actions = [];
 
@@ -268,23 +301,13 @@
         const place = collectionData.places[idx];
         const action = { name: place.name, action: sel.value };
 
-        if (sel.value === 'move') {
+        if (sel.value === 'move' || sel.value === 'copy') {
           const target = tbody.querySelector(`.target-control[data-idx="${idx}"]`);
-          const targetList = target.value.trim();
-          if (!targetList) {
-            alert(`Please select a target list for "${place.name}"`);
-            target.focus();
-            return;
-          }
-          action.targetList = targetList;
+          action.targetList = target.value.trim();
+          if (place.note) action.note = place.note;
         }
 
         actions.push(action);
-      }
-
-      if (actions.length === 0) {
-        alert('No actions selected — mark at least one place as Remove or Move to start an update.');
-        return;
       }
 
       document.getElementById('update-log').innerHTML = '';
@@ -312,6 +335,11 @@
 
     document.getElementById('start-update-btn').addEventListener('click', startUpdate);
     document.getElementById('start-update-btn-bottom').addEventListener('click', startUpdate);
+
+    // Delegated on the tbody element (stable across renders) so target-control edits —
+    // typing a freeform list name, or picking one from a <select> — revalidate live.
+    document.getElementById('places-table').addEventListener('input', validateActions);
+    document.getElementById('places-table').addEventListener('change', validateActions);
 
     // ── Retry ────────────────────────────────────────────────────────────────
     document.getElementById('retry-btn').addEventListener('click', async () => {
@@ -386,6 +414,22 @@
       li.textContent = `${name}: ${problem}`;
       list.appendChild(li);
     });
+    evtSource.addEventListener('skipped', e => {
+      if (!updatingThisSession) return;
+      const { name, reason } = JSON.parse(e.data);
+      const container = document.getElementById('update-log-container');
+      const list = document.getElementById('update-log');
+      const heading = document.getElementById('update-log-heading');
+      if (!heading.textContent) {
+        heading.textContent = 'Notes';
+        heading.className = 'text-xs font-medium text-gray-600 mb-2';
+      }
+      container.classList.remove('hidden');
+      const li = document.createElement('li');
+      li.className = 'text-gray-500';
+      li.textContent = `[skipped] ${reason || name}`;
+      list.appendChild(li);
+    });
     evtSource.addEventListener('dryRunAction', e => {
       if (!updatingThisSession) return;
       const { name, action, targetList } = JSON.parse(e.data);
@@ -398,7 +442,9 @@
       li.className = 'text-amber-700';
       li.textContent = action === 'move'
         ? `[would move] ${name} → ${targetList}`
-        : `[would remove] ${name}`;
+        : action === 'copy'
+          ? `[would copy] ${name} → ${targetList}`
+          : `[would remove] ${name}`;
       list.appendChild(li);
     });
 
