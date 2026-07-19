@@ -12,7 +12,7 @@ import { copyPlaceToList } from './copy-place-to-list.ts';
 import { removePlaceFromList } from './remove-place-from-list.ts';
 import { placeButtonName } from './open-place-panel.ts';
 import { isCancelRequested, CancelledError } from './cancel.ts';
-import { flagListsForResync } from '../resync.ts';
+import { resetMutationTracking, flushResyncFlags } from '../mutations.ts';
 
 export async function performUpdates(
   context: BrowserContext,
@@ -23,13 +23,10 @@ export async function performUpdates(
   let skipped = 0;
   /** Actions the loop got all the way through — used to report how far a cancelled run got. */
   let completedCount = 0;
-  /**
-   * Lists this run actually wrote to in Maps — the source it removed from, plus any list
-   * it added to or appended a note on. Their on-disk snapshots are now out of date, so
-   * they get flagged for re-sync once the run ends (see the finally block). A dry run and
-   * skipped actions add nothing here, since neither changes anything in Maps.
-   */
-  const mutatedLists = new Set<string>();
+
+  // Start from a clean slate: recordMutation (called deep in the mutation modules) accrues
+  // the run's changed lists into module state, which flushResyncFlags() drains in finally.
+  resetMutationTracking();
 
   const raw = await Bun.file(actionFilePath).text();
   const data: ActionFile = JSON.parse(raw);
@@ -111,40 +108,26 @@ export async function performUpdates(
           const outcome = await movePlaceToList(page!, action.name, listName, action.targetList!, action.note);
           if (outcome === 'not-in-source') {
             skip(action.name, `no longer in "${listName}" (list may be out of sync) — skipped.`);
-          } else {
-            // A move always removes from the source (even when already in target, it's
-            // "removed without re-adding"), and touches the target when it added the place
-            // or appended a note to it.
-            mutatedLists.add(listName);
-            if (outcome === 'moved' || action.note) mutatedLists.add(action.targetList!);
-            if (outcome === 'already-in-target') {
-              skip(
-                action.name,
-                `was already in "${action.targetList}" — removed from "${listName}" without re-adding${action.note ? ' (note still appended)' : ''}.`,
-              );
-            }
+          } else if (outcome === 'already-in-target') {
+            skip(
+              action.name,
+              `was already in "${action.targetList}" — removed from "${listName}" without re-adding${action.note ? ' (note still appended)' : ''}.`,
+            );
           }
         } else if (action.action === 'copy') {
           const outcome = await copyPlaceToList(page!, action.name, listName, action.targetList!, action.note);
           if (outcome === 'not-in-source') {
             skip(action.name, `no longer in "${listName}" (list may be out of sync) — skipped.`);
-          } else {
-            // A copy leaves the source untouched; the target changes when the place was
-            // added or a note was appended to it.
-            if (outcome === 'copied' || action.note) mutatedLists.add(action.targetList!);
-            if (outcome === 'already-in-target') {
-              skip(
-                action.name,
-                `was already in "${action.targetList}" — nothing to add${action.note ? ' (note still appended)' : ''}.`,
-              );
-            }
+          } else if (outcome === 'already-in-target') {
+            skip(
+              action.name,
+              `was already in "${action.targetList}" — nothing to add${action.note ? ' (note still appended)' : ''}.`,
+            );
           }
         } else {
           const outcome = await removePlaceFromList(page!, action.name, listName);
           if (outcome === 'not-in-list') {
             skip(action.name, `no longer in "${listName}" (list may be out of sync) — skipped.`);
-          } else {
-            mutatedLists.add(listName);
           }
         }
         completedCount++;
@@ -208,11 +191,11 @@ export async function performUpdates(
     setUpdateState({ status: 'error', message });
     throw finalErr;
   } finally {
-    // Flag every list this run wrote to for re-sync. Done in the finally so a run that
-    // errored or was cancelled partway still flags whatever it managed to change before
-    // stopping — those mutations are already committed in Maps regardless of how the run
-    // ended. No-ops for a dry run, which never fills mutatedLists.
-    await flagListsForResync(mutatedLists).catch(() => {});
+    // Flush the lists recordMutation accrued into re-sync flags. Done in the finally so a
+    // run that errored or was cancelled partway still flags whatever it managed to change
+    // before stopping — those mutations are already committed in Maps regardless of how the
+    // run ended. No-ops for a dry run, which records no mutations.
+    await flushResyncFlags().catch(() => {});
 
     // The action file only ever described intent, and that intent is now in the session
     // log — so it has no reason to outlive the run. Deleted on every exit path, including

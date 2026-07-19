@@ -13,7 +13,7 @@
  */
 
 import { type Page } from 'playwright';
-import { logMutation } from '../logger.ts';
+import { recordMutation } from '../mutations.ts';
 
 export type SetNoteOutcome = 'set' | 'appended' | 'not-found';
 
@@ -87,7 +87,7 @@ export async function appendPlaceNote(
   // Logged after the settle wait, so the entry only exists once the change is committed.
   // `previousNote` is the sole record of what the note said beforehand — Maps keeps no
   // history, and the collect snapshot is overwritten on every re-sync.
-  logMutation({
+  recordMutation({
     op: 'append-note',
     place: placeName,
     list: listName ?? '(current list)',

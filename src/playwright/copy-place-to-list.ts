@@ -17,7 +17,7 @@ import { openPlacePanel, closeMembershipDropdown } from './open-place-panel.ts';
 import { resetToSavedListsPanel } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 import { appendPlaceNote } from './set-place-note.ts';
-import { logMutation } from '../logger.ts';
+import { recordMutation } from '../mutations.ts';
 
 export type CopyOutcome = 'copied' | 'already-in-target' | 'not-in-source';
 
@@ -90,7 +90,7 @@ export async function copyPlaceToList(
     // cancel the in-flight request and silently drop the change.
     await page.waitForTimeout(1_000);
     // Logged after the settle wait, so the entry only exists once the change is committed.
-    logMutation({ op: 'add-to-list', place: placeName, list: destinationListName });
+    recordMutation({ op: 'add-to-list', place: placeName, list: destinationListName });
     // Clicking a radio does not dismiss the menu, so close it explicitly — the same
     // cleanup the already-checked branch above does.
     await closeMembershipDropdown(page);
