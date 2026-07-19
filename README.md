@@ -40,11 +40,11 @@ Each collection is a permanent URL. Browser back and forward work naturally thro
 
 **Step 1 — Collect** (`/`)
 
-Click _Scan My Saved Lists_. A browser window opens, navigates to Google Maps, and reads the names of all your saved lists — no places are scraped yet, just the list names (written to `output/saved-lists.json`, also used elsewhere for the _Move to…_ dropdown). Once it finishes, pick one from the dropdown (lists already imported are left out, since re-syncing those is handled below) and click _Import_. That runs the full import — opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
+Click _Scan My Saved Lists_. A browser window opens, navigates to Google Maps, and reads the names of all your saved lists — no places are scraped yet, just the list names. Once it finishes, pick one from the dropdown (lists you've already imported are left out, since re-syncing those is handled below) and click _Import_. That runs the full import — opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
 
-Previously imported lists appear below with a "Last synced" timestamp — since each is a point-in-time snapshot, click _Re-sync_ next to a list to refresh it if it's been a while (the page flags anything older than a week and suggests a re-sync).
+Previously imported lists appear below with a "Last synced" timestamp. Since each is a point-in-time snapshot, click _Re-sync_ next to a list to refresh it. The page recommends a re-sync when the snapshot is over a week old, or when a later update has changed that list in Maps (moved or copied a place into it, removed one from it, or appended a note) so your imported copy no longer matches.
 
-While a scan or import is running, a _Cancel_ button is available if it gets stuck (e.g. Maps never finishing loading, or a scroll loop that never reaches the bottom). Cancelling force-closes the Playwright browser, which is what actually unblocks whatever call was hanging — see [Cancellation](#cancellation) below.
+While a scan or import is running, a _Cancel_ button is available if it gets stuck.
 
 **Step 2 — Review** (`/collections/:fileName`)
 
@@ -52,7 +52,7 @@ The collection page shows every place with its address and note. For each place 
 
 **Step 3 — Update** (same page)
 
-Check _Dry run_ if you just want to validate selectors without touching real data, then click _Start Update_. The browser navigates back to Maps and applies every marked change. Progress is shown inline; individual failures are logged without stopping the rest of the run. The actions file is written to `output/` for reference.
+Check _Dry run_ if you just want to validate selectors without touching real data, then click _Start Update_. The browser navigates back to Maps and applies every marked change. Progress is shown inline; individual failures are logged without stopping the rest of the run.
 
 ### Dry-run mode
 
@@ -60,219 +60,39 @@ Dry run is a per-update choice, not a server-wide setting: tick the _Dry run_ ch
 
 Starting the server with `DRY_RUN=true` (or the `dev:dry` / `start:dry` scripts) forces every update to run as a dry run regardless of the checkbox — the checkbox is shown checked and disabled in that case. Use the env var for a server that should never write to Maps (e.g. a staging setup); use the per-update checkbox to validate a specific run on an otherwise live server.
 
-### Cancellation
+### Cancelling a run
 
-Playwright automation can hang — Maps never finishing a load, or a scroll loop that never detects it's reached the bottom. `POST /api/collect/cancel` and `POST /api/update/cancel` (wired to the _Cancel_ buttons on `/` and `/collections/:file`) handle this by:
+Both the import screen and the update screen have a _Cancel_ button for when the automation gets stuck (Maps never finishing a load, or a scroll loop that never reaches the bottom).
 
-1. Setting a module-level flag (`src/playwright/cancel.ts`) that `collect.ts`, `browse-saved-lists.ts`, `saved-list-names.ts`, and `update.ts` check between loop iterations, so a run that's merely looping stops on its next check.
-2. Force-closing the persistent Playwright browser context. This is what actually unblocks a run that's stuck *inside* a single blocking call (`page.goto`, `locator.waitFor`, etc.) — closing the context makes Playwright reject that in-flight call immediately.
+**Cancelling an update is not an undo.** An import only reads, so stopping it loses nothing. An update may already have written some changes to Maps by the time you cancel — those stay; the run just stops where it is and tells you how many actions completed. See [docs/cancellation.md](./docs/cancellation.md) for the details.
 
-Either path lands in the flow's own `catch` block, which checks the cancellation flag and reports `"Cancelled by user."` as the terminal error state instead of whatever raw Playwright error surfaced.
+## Where your data lives
 
-Both workflows reset the flag when a run starts, so a cancellation never leaks into the next run.
+Everything is written to `output/` (git-ignored) and never leaves your machine: your imported collections, the list of saved-list names, and a per-session change log under `output/logs/`.
 
-**Cancelling an update is not an undo.** Collect only ever reads, so stopping it loses nothing; an update may already have written to Maps by the time it's cancelled. Nothing is rolled back — the run stops where it is, and the terminal message reports how many actions completed (`Cancelled by user after 3 of 8 action(s). Changes already made were not undone.`). The mutations that did land are in the session log; see [Session logging](#session-logging).
+### Undoing a mistake
 
-Because force-closing the browser makes the in-flight Playwright call reject, that rejection surfaces inside `update.ts`'s per-action `catch`. That handler re-checks the cancel flag and rethrows, so a cancellation isn't recorded as a failure of the action it interrupted — and doesn't leave the loop running on to fail every remaining action.
+Every change the tool makes to Google Maps is recorded in a session log at `output/logs/session_<timestamp>.jsonl` — a fresh file each time the server starts. Each line is one change (a place added to a list, removed from a list, or a note appended), recorded in enough detail to reverse it by hand:
 
-## Output files
+- an **add** is undone by removing the place from that list,
+- a **remove** is undone by adding it back,
+- a **note** change stores the previous text, so you can restore it.
 
-Everything is written to `output/` (git-ignored except `.gitkeep`):
+There's no automatic undo button, but the log is an exact, time-ordered record of what happened — so if a run does something you didn't intend, you can open the log and walk the changes back in Maps yourself. See [docs/session-logging.md](./docs/session-logging.md) for the format and [docs/architecture.md](./docs/architecture.md#output-files) for the other files.
 
-| File pattern | Contents |
-|---|---|
-| `saved-lists.json` | Names of all saved lists — refreshed on each collect run, used to populate the _Move to…_ dropdown |
-| `{list}_{ts}.json` | Scraped collection — places with name, address, and note |
-| `{list}_{ts}_actions.json` | Actions confirmed on the collection page (created when update starts, **deleted when the run ends** — the intent is recorded in the session log first) |
-| `logs/session_{ts}.jsonl` | One log file per server process — see [Session logging](#session-logging) |
+## Accuracy & reporting problems
 
----
+This tool automates a real browser against Google Maps' live website — which changes without notice and has no official API for personal saved data. **100% accuracy is not guaranteed.** A run can occasionally skip a place, misread a note, or fail on a page element that Maps has changed. So:
 
-## Session logging
+- Use **Dry run** first when you're unsure — it walks through every change and reports what it _would_ do without writing anything.
+- Sanity-check important changes afterward, and keep the session log (above) as your safety net.
 
-Every run of the server writes to its own timestamped file, `output/logs/session_{ts}.jsonl`.
-Restarting the server — including a watch-mode reload — starts a new one. All logging for a
-session lands in that single file; there are no separate per-error files.
+If you notice a bug, a wrong result, or anything that looks off, please **[open a GitHub issue](https://github.com/E-Kuerschner/gmaps-retag/issues)**. Describe what you did and, if you can, include the relevant lines from the session log — reports like that are the main way selector breakages get found and fixed.
 
-The format is [JSON Lines](https://jsonlines.org): one JSON object per line, so the file is
-greppable by eye and parseable by a script. Every entry carries a `timestamp` and a `level`
-of either `info` or `error`.
+## How it works
 
-Entries that record an actual change to a saved list also carry a `mutation` object:
+For contributors: the design — process model, state and SSE communication, the Playwright module breakdown, and how selectors are kept resilient to Maps changes — is documented under [`docs/`](./docs):
 
-```jsonc
-{"timestamp":"…","level":"info","message":"Removed \"Ritual Coffeehouse\" from list \"TEST 1\"",
- "mutation":{"op":"remove-from-list","place":"Ritual Coffeehouse","list":"TEST 1"}}
-```
-
-Mutations are recorded at the atomic level at which Google Maps actually changes — `add-to-list`,
-`remove-from-list`, `append-note` — rather than at the level of the user-facing action. A **move**
-therefore appears as an add followed by a remove. This is deliberate: each atomic record carries
-everything needed to construct its own inverse, which is what makes the log usable for undo.
-
-| `op` | Inverse |
-|---|---|
-| `add-to-list` | remove the place from `list` |
-| `remove-from-list` | add the place back to `list` |
-| `append-note` | restore `previousNote` |
-
-`previousNote` matters most — it is the only record anywhere of what a note said beforehand. Maps
-keeps no history, and the collect snapshot is overwritten on every re-sync.
-
-Two guarantees make the log trustworthy for recovery:
-
-- **Append-only, flushed per entry.** Written with a synchronous append per line, so a crash or a
-  force-closed browser (which is how cancellation works) can never truncate what came before.
-- **Written only after the change commits.** Every mutation is logged after its settle wait, never
-  before — so anything in the file is something that actually happened.
-
-The converse is worth knowing: a process killed mid-click can leave a change made in Maps but not
-logged. The window is small, but the log is a lower bound on what happened, not a perfect mirror.
-There is no automatic rollback — the log gives you the data to reconstruct by hand.
-
----
-
-## Architecture
-
-### Bird's-eye view
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                          Bun process                             │
-│                                                                  │
-│  ┌──────────────────┐  setCollectState()  ┌──────────────────┐  │
-│  │  collect.ts      │ ──────────────────▶ │                  │  │
-│  │                  │                     │  AppState        │  │
-│  │  update.ts       │ ──────────────────▶ │  src/state.ts    │  │
-│  └──────────────────┘  setUpdateState()   │                  │  │
-│                                           └────────┬─────────┘  │
-│                                                    │ broadcast() │
-│                                                    ▼            │
-│  ┌──────────────────┐   fetch POST        ┌──────────────────┐  │
-│  │  Browser UI      │ ──────────────────▶ │  Bun.serve()     │  │
-│  │  (HTML pages)    │                     │  src/server.ts   │  │
-│  │                  │ ◀─── SSE stream ─── │                  │  │
-│  └──────────────────┘                     └──────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-User actions travel from the browser to the server as plain `fetch` POST calls. Progress and state changes travel back through a persistent SSE stream on `/api/events`.
-
-### State model
-
-State is split into two independent workflows. Each page subscribes to the part it cares about:
-
-```typescript
-interface AppState {
-  dryRun: boolean;
-  collect: CollectWorkflow;   // watched by /
-  update:  UpdateWorkflow;    // watched by /collections/:f
-}
-```
-
-Each workflow follows the same simple lifecycle:
-
-```
-collect:   idle ──▶ running ──▶ done
-             │            └──▶ error
-             └──▶ browsing ──▶ idle   (scrape saved list names, then back to idle)
-                          └──▶ error
-
-update:    idle ──▶ running ──▶ done
-                          └──▶ error
-```
-
-Mutations go through `setCollectState(partial)` or `setUpdateState(partial)`, which shallow-merge the update into the relevant workflow slice and immediately broadcast the new full state to all connected SSE clients.
-
-The two workflows are independent — the collect and update Playwright processes are completely separate runs. Starting a second run while one is active is rejected with 409.
-
-### Routing
-
-```
-GET  /                           → collect.html
-GET  /collections/:fileName      → collection.html
-
-GET  /api/events                 → SSE stream (broadcasts AppState on every mutation)
-GET  /api/saved-lists            → names of all saved lists (from output/saved-lists.json, or [] if not yet collected)
-GET  /api/collect-files          → list of collection JSON files in output/
-GET  /api/collections/:fileName  → contents of a specific collection JSON
-DEL  /api/collect-files/:name    → delete a collection file
-
-POST /api/log-error              → { message } — record a client-side error in the session log
-
-GET  /map-background.jpg         → static page background (the only static asset route; matched by exact path)
-
-POST /api/collect/start          → { listName } — launch collect workflow
-POST /api/collect/browse-lists   → scrape all saved list names (no listName needed); writes output/saved-lists.json and broadcasts a savedLists event
-POST /api/collect/cancel         → force-stop an in-progress collect/browse run (see Cancellation)
-POST /api/collect/reset          → reset collect workflow to idle
-
-POST /api/update/start           → { collectionFile, actions[], dryRun? } — write action file, launch update workflow (dryRun forced true if server started with DRY_RUN=true)
-POST /api/update/cancel          → force-stop an in-progress update run (see Cancellation)
-POST /api/update/reset           → reset update workflow to idle
-
-POST /api/reset                  → reset both workflows to idle
-POST /api/browser/close          → close the persistent Playwright browser
-```
-
-### SSE communication
-
-A single `/api/events` endpoint serves all pages. The server keeps a `Set` of active `ReadableStreamDefaultController` instances — one per connected tab. On connect, the current `AppState` is sent immediately so the page renders without waiting for the next mutation.
-
-```
-Browser tab                         Server
-    │                                  │
-    │   GET /api/events                │
-    │ ───────────────────────────────▶ │  adds controller to Set
-    │ ◀── event: state (snapshot) ──── │  sends current state immediately
-    │                                  │
-    │         [Playwright runs in background]
-    │                                  │
-    │ ◀── event: place ──────────────── │  each scraped place (collect)
-    │ ◀── event: savedLists ─────────── │  full list of saved-list names (collect, browse-lists)
-    │ ◀── event: progress ───────────── │  per-item progress (update)
-    │ ◀── event: error ──────────────── │  per-item failure (update)
-    │ ◀── event: dryRunAction ────────── │  dry-run log entry (update)
-    │ ◀── event: skipped ────────────── │  per-item action skipped as already up to date (update)
-    │ ◀── event: state (done/error) ──── │  terminal state
-```
-
-Playwright runs fire-and-forget from inside the API handler. The HTTP response returns as soon as the workflow is launched; all subsequent progress arrives over SSE.
-
-### Playwright modules
-
-Navigation to Google Maps is broken into composable, reusable steps in `src/playwright/`:
-
-| Module | Signature | What it does |
-|---|---|---|
-| `browser.ts` | `getBrowserContext()` | Creates/reuses the persistent Chromium profile in `browser-data/` |
-| `open-saved-lists.ts` | `(context) → Page`; also exports `resetToSavedListsPanel(page)` | Navigates to Maps and opens the saved-lists panel; the reset helper returns to that panel from any depth without a full reload, for switching between lists mid-flow |
-| `open-list-by-name.ts` | `(page, listName) → Page` | Clicks a named list in the panel — only works from the saved-lists overview |
-| `saved-list-names.ts` | `scrapeSavedListNames(page)`, `writeSavedListNames(dir, names)` | Reads list names from the open saved-lists panel and persists them |
-| `browse-saved-lists.ts` | `(context) → void` | Standalone flow: open saved lists, scrape names only, write JSON, broadcast — used by "Scan My Saved Lists" |
-| `cancel.ts` | `requestCancel()`, `isCancelRequested()`, `resetCancel()`, `CancelledError` | Cooperative cancellation flag checked by collect/browse loops — see [Cancellation](#cancellation) |
-| `get-place-details.ts` | `(page, placeName) → PlaceDetails` | Clicks a place, scrapes name/address/note |
-| `open-place-panel.ts` | `openPlacePanel(page, placeName) → OpenPlacePanelResult`; also exports `placeButtonName(placeName)`, `closeMembershipDropdown(page)` | Opens a place's detail panel and returns a Locator scoped to it, for reading/toggling its "Saved (N)" membership dropdown |
-| `set-place-note.ts` | `appendPlaceNote(page, placeName, noteToAdd, listName?) → SetNoteOutcome` | Appends text to a place's note in the currently open list's feed, creating the note if it doesn't have one. `listName` is used only to label the mutation log entry |
-| `copy-place-to-list.ts` | `(page, placeName, sourceListName, destinationListName, note?) → CopyOutcome` | Adds a place to a list via the Saved dropdown, skipping the click if already a member; if `note` is given, appends it to the place's note on the destination list |
-| `remove-place-from-list.ts` | `(page, placeName, listName) → RemoveOutcome` | Removes a place from a list via the Saved dropdown, skipping the click if not a member |
-| `move-place-to-list.ts` | `(page, placeName, src, dest, note?) → MoveOutcome` | Composes copy + remove: adds to `dest` first (carrying `note` over if given), then removes from `src` |
-| `collect.ts` | `(context, listName) → string` | Full collect workflow — navigate, scroll, enrich, write JSON |
-| `update.ts` | `(context, actionFilePath) → void` | Full update workflow — navigate, apply each action |
-
-`collect.ts` and `update.ts` orchestrate the atomic modules above. The smaller modules are independently usable in scripts or future flows.
-
-The three modules that actually change something in Maps — `copy-place-to-list.ts`, `remove-place-from-list.ts`, and `set-place-note.ts` — each call `logMutation()` from `src/logger.ts` immediately after the change settles. Instrumenting at this level rather than in `update.ts` means any future flow that composes these modules is recorded automatically. See [Session logging](#session-logging).
-
-### Selector fragility
-
-Google Maps uses dynamically generated CSS class names. All Playwright selectors prefer `aria-label`, `role`, and text-content attributes. Selectors that rely on internal class names or attributes are annotated:
-
-- `// BRITTLE:` — known-fragile; will break when Maps deploys a new class hash
-- `// UNCERTAIN:` — selector works in testing but the attribute may change by locale or Maps version
-
-These annotations are the first things to check when a live Maps session breaks a flow.
-
-### Browser persistence
-
-Playwright launches a **persistent browser context** stored in `browser-data/` (git-ignored). This preserves the Google session between server restarts so login is only required once.
+- [docs/architecture.md](./docs/architecture.md) — process model, state, routing, SSE, Playwright modules, output files
+- [docs/session-logging.md](./docs/session-logging.md) — the per-session change log and how it supports undo-by-hand
+- [docs/cancellation.md](./docs/cancellation.md) — how cancelling a stuck run works

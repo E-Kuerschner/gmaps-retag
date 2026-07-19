@@ -12,6 +12,7 @@ import { copyPlaceToList } from './copy-place-to-list.ts';
 import { removePlaceFromList } from './remove-place-from-list.ts';
 import { placeButtonName } from './open-place-panel.ts';
 import { isCancelRequested, CancelledError } from './cancel.ts';
+import { resetMutationTracking, flushResyncFlags } from '../mutations.ts';
 
 export async function performUpdates(
   context: BrowserContext,
@@ -22,6 +23,10 @@ export async function performUpdates(
   let skipped = 0;
   /** Actions the loop got all the way through — used to report how far a cancelled run got. */
   let completedCount = 0;
+
+  // Start from a clean slate: recordMutation (called deep in the mutation modules) accrues
+  // the run's changed lists into module state, which flushResyncFlags() drains in finally.
+  resetMutationTracking();
 
   const raw = await Bun.file(actionFilePath).text();
   const data: ActionFile = JSON.parse(raw);
@@ -186,6 +191,12 @@ export async function performUpdates(
     setUpdateState({ status: 'error', message });
     throw finalErr;
   } finally {
+    // Flush the lists recordMutation accrued into re-sync flags. Done in the finally so a
+    // run that errored or was cancelled partway still flags whatever it managed to change
+    // before stopping — those mutations are already committed in Maps regardless of how the
+    // run ended. No-ops for a dry run, which records no mutations.
+    await flushResyncFlags().catch(() => {});
+
     // The action file only ever described intent, and that intent is now in the session
     // log — so it has no reason to outlive the run. Deleted on every exit path, including
     // failure and cancellation: a retry posts a fresh set of actions rather than reusing

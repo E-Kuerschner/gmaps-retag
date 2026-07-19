@@ -16,7 +16,7 @@ import { type Page } from 'playwright';
 import { openPlacePanel, closeMembershipDropdown } from './open-place-panel.ts';
 import { resetToSavedListsPanel } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
-import { logMutation } from '../logger.ts';
+import { recordMutation } from '../mutations.ts';
 
 export type RemoveOutcome = 'removed' | 'not-in-list';
 
@@ -86,7 +86,7 @@ export async function removePlaceFromList(
   // can cancel the in-flight request and silently drop the change.
   await page.waitForTimeout(1_000);
   // Logged after the settle wait, so the entry only exists once the change is committed.
-  logMutation({ op: 'remove-from-list', place: placeName, list: listName });
+  recordMutation({ op: 'remove-from-list', place: placeName, list: listName });
 
   // Leave the page back on listName's feed rather than on this place's panel with its
   // dropdown still open. Clicking a radio doesn't dismiss the menu, and a leftover open

@@ -113,9 +113,14 @@ const server = Bun.serve({
       const result = await Promise.all(files.map(async (fileName) => {
         try {
           const data: CollectedList = JSON.parse(await Bun.file(join(DATA_DIR, fileName)).text());
-          return { fileName, listName: data.listName, lastUpdated: data.lastUpdated ?? null };
+          return {
+            fileName,
+            listName: data.listName,
+            lastUpdated: data.lastUpdated ?? null,
+            dirtySince: data.dirtySince ?? null,
+          };
         } catch {
-          return { fileName, listName: fileName, lastUpdated: null };
+          return { fileName, listName: fileName, lastUpdated: null, dirtySince: null };
         }
       }));
       return json(result);
