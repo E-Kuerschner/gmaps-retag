@@ -6,6 +6,16 @@
   <title>gmaps-retag</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
+    /* Subtle city-map backdrop. Fixed so it stays put while the page scrolls,
+       and cover so it fills any viewport without tiling seams. */
+    body {
+      background-image: url("/map-background.jpg");
+      background-size: cover;
+      background-position: center;
+      background-attachment: fixed;
+      background-repeat: no-repeat;
+    }
+
     .spinner {
       width: 20px; height: 20px;
       border: 2px solid #e5e7eb;

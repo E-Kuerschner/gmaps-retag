@@ -2,6 +2,7 @@ import { type BrowserContext, type Page } from 'playwright';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { setCollectState, broadcast } from '../state.ts';
+import { logInfo, logError } from '../logger.ts';
 import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { scrapeSavedListNames, writeSavedListNames } from './saved-list-names.ts';
@@ -33,11 +34,13 @@ export async function browseSavedLists(context: BrowserContext): Promise<void> {
     }
 
     await writeSavedListNames(DATA_DIR, names);
+    logInfo(`Scanned ${names.length} saved list name(s)`, { count: names.length });
     broadcast('savedLists', names);
 
     setCollectState({ status: 'idle', message: undefined });
   } catch (err) {
     const finalErr = isCancelRequested() ? new CancelledError() : err instanceof Error ? err : new Error(String(err));
+    logError(`Scan of saved lists aborted: ${finalErr.message}`);
     setCollectState({ status: 'error', message: finalErr.message });
     throw finalErr;
   } finally {

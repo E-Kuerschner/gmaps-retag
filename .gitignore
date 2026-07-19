@@ -1,10 +1,14 @@
 # Project-specific
 browser-data/
-output/data/*.json
-output/logs/*.json
+output/**
+!output/**/
+!**/.gitkeep
 
 # Playwright
 .playwright-mcp
+
+# IDE
+.idea/
 
 # Logs
 logs

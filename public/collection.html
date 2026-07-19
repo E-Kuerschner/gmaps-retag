@@ -6,6 +6,16 @@
   <title>Collection · gmaps-retag</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
+    /* Subtle city-map backdrop. Fixed so it stays put while the page scrolls,
+       and cover so it fills any viewport without tiling seams. */
+    body {
+      background-image: url("/map-background.jpg");
+      background-size: cover;
+      background-position: center;
+      background-attachment: fixed;
+      background-repeat: no-repeat;
+    }
+
     .spinner {
       width: 20px; height: 20px;
       border: 2px solid #e5e7eb;
@@ -83,9 +93,15 @@
 
     <!-- ── Update running ────────────────────────────────────────────────── -->
     <section id="section-updating" class="hidden bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-      <div class="flex items-center gap-3 mb-5">
-        <div class="spinner"></div>
-        <p id="update-status" class="text-sm text-gray-600">Starting…</p>
+      <div class="flex items-center justify-between gap-3 mb-5">
+        <div class="flex items-center gap-3">
+          <div class="spinner"></div>
+          <p id="update-status" class="text-sm text-gray-600">Starting…</p>
+        </div>
+        <button id="cancel-update-btn" type="button"
+          class="shrink-0 rounded-lg border border-red-300 text-red-600 px-4 py-2 text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50">
+          Cancel
+        </button>
       </div>
       <div class="mb-4">
         <div class="flex justify-between text-xs text-gray-400 mb-1">
@@ -153,6 +169,7 @@
     let collectionData = null;
     let savedLists = [];
     let updatingThisSession = false;
+    let cancelling = false;
 
     async function logClientError(message) {
       try {
@@ -315,6 +332,10 @@
       document.getElementById('progress-bar').style.width = '0%';
       document.getElementById('progress-fraction').textContent = '';
       updatingThisSession = true;
+      cancelling = false;
+      const cancelBtn = document.getElementById('cancel-update-btn');
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = 'Cancel';
       showSection('section-updating');
 
       const dryRun = document.getElementById('dry-run-toggle').checked;
@@ -341,10 +362,28 @@
     document.getElementById('places-table').addEventListener('input', validateActions);
     document.getElementById('places-table').addEventListener('change', validateActions);
 
+    // ── Cancel a running update ──────────────────────────────────────────────
+    document.getElementById('cancel-update-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('cancel-update-btn');
+      cancelling = true;
+      btn.disabled = true;
+      btn.textContent = 'Cancelling…';
+
+      const res = await fetch('/api/update/cancel', { method: 'POST' }).catch(() => null);
+      if (!res || !res.ok) {
+        cancelling = false;
+        btn.disabled = false;
+        btn.textContent = 'Cancel';
+      }
+      // On success the running flow's own state update (via SSE) moves the page to the
+      // error section reporting how far it got — no need to touch the UI further here.
+    });
+
     // ── Retry ────────────────────────────────────────────────────────────────
     document.getElementById('retry-btn').addEventListener('click', async () => {
       await fetch('/api/update/reset', { method: 'POST' });
       updatingThisSession = false;
+      cancelling = false;
       showSection('section-review');
     });
 
@@ -364,6 +403,9 @@
       if (update.status === 'running') {
         showSection('section-updating');
         if (update.message) document.getElementById('update-status').textContent = update.message;
+        const cancelBtn = document.getElementById('cancel-update-btn');
+        cancelBtn.disabled = cancelling;
+        cancelBtn.textContent = cancelling ? 'Cancelling…' : 'Cancel';
         if (update.progress) {
           const { current, total } = update.progress;
           const pct = total > 0 ? Math.round((current / total) * 100) : 0;
@@ -372,6 +414,7 @@
         }
       } else if (update.status === 'done') {
         updatingThisSession = false;
+        cancelling = false;
         showSection('section-done');
         document.getElementById('done-message').textContent = update.message || 'All updates applied.';
         const hasErrors = update.errorCount > 0;
@@ -386,6 +429,7 @@
         document.getElementById('done-heading').className = `font-medium ${hasErrors ? 'text-amber-900' : 'text-green-900'}`;
       } else if (update.status === 'error') {
         updatingThisSession = false;
+        cancelling = false;
         showSection('section-update-error');
         document.getElementById('update-error-message').textContent = update.message || 'Unknown error';
       }

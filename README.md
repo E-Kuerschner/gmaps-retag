@@ -62,12 +62,18 @@ Starting the server with `DRY_RUN=true` (or the `dev:dry` / `start:dry` scripts)
 
 ### Cancellation
 
-Playwright automation can hang — Maps never finishing a load, or a scroll loop that never detects it's reached the bottom. `POST /api/collect/cancel` (wired to the _Cancel_ button on `/`) handles this by:
+Playwright automation can hang — Maps never finishing a load, or a scroll loop that never detects it's reached the bottom. `POST /api/collect/cancel` and `POST /api/update/cancel` (wired to the _Cancel_ buttons on `/` and `/collections/:file`) handle this by:
 
-1. Setting a module-level flag (`src/playwright/cancel.ts`) that `collect.ts`, `browse-saved-lists.ts`, and `saved-list-names.ts` check between loop iterations, so a run that's merely looping stops on its next check.
+1. Setting a module-level flag (`src/playwright/cancel.ts`) that `collect.ts`, `browse-saved-lists.ts`, `saved-list-names.ts`, and `update.ts` check between loop iterations, so a run that's merely looping stops on its next check.
 2. Force-closing the persistent Playwright browser context. This is what actually unblocks a run that's stuck *inside* a single blocking call (`page.goto`, `locator.waitFor`, etc.) — closing the context makes Playwright reject that in-flight call immediately.
 
-Either path lands in the flow's own `catch` block, which checks the cancellation flag and reports `"Cancelled by user."` as the terminal error state instead of whatever raw Playwright error surfaced. The update workflow doesn't yet have the same cancel wiring.
+Either path lands in the flow's own `catch` block, which checks the cancellation flag and reports `"Cancelled by user."` as the terminal error state instead of whatever raw Playwright error surfaced.
+
+Both workflows reset the flag when a run starts, so a cancellation never leaks into the next run.
+
+**Cancelling an update is not an undo.** Collect only ever reads, so stopping it loses nothing; an update may already have written to Maps by the time it's cancelled. Nothing is rolled back — the run stops where it is, and the terminal message reports how many actions completed (`Cancelled by user after 3 of 8 action(s). Changes already made were not undone.`). The mutations that did land are in the session log; see [Session logging](#session-logging).
+
+Because force-closing the browser makes the in-flight Playwright call reject, that rejection surfaces inside `update.ts`'s per-action `catch`. That handler re-checks the cancel flag and rethrows, so a cancellation isn't recorded as a failure of the action it interrupted — and doesn't leave the loop running on to fail every remaining action.
 
 ## Output files
 
@@ -77,8 +83,52 @@ Everything is written to `output/` (git-ignored except `.gitkeep`):
 |---|---|
 | `saved-lists.json` | Names of all saved lists — refreshed on each collect run, used to populate the _Move to…_ dropdown |
 | `{list}_{ts}.json` | Scraped collection — places with name, address, and note |
-| `{list}_{ts}_actions.json` | Actions confirmed on the collection page (created when update starts) |
-| `errors_{ts}.json` | Per-item failures from either workflow |
+| `{list}_{ts}_actions.json` | Actions confirmed on the collection page (created when update starts, **deleted when the run ends** — the intent is recorded in the session log first) |
+| `logs/session_{ts}.jsonl` | One log file per server process — see [Session logging](#session-logging) |
+
+---
+
+## Session logging
+
+Every run of the server writes to its own timestamped file, `output/logs/session_{ts}.jsonl`.
+Restarting the server — including a watch-mode reload — starts a new one. All logging for a
+session lands in that single file; there are no separate per-error files.
+
+The format is [JSON Lines](https://jsonlines.org): one JSON object per line, so the file is
+greppable by eye and parseable by a script. Every entry carries a `timestamp` and a `level`
+of either `info` or `error`.
+
+Entries that record an actual change to a saved list also carry a `mutation` object:
+
+```jsonc
+{"timestamp":"…","level":"info","message":"Removed \"Ritual Coffeehouse\" from list \"TEST 1\"",
+ "mutation":{"op":"remove-from-list","place":"Ritual Coffeehouse","list":"TEST 1"}}
+```
+
+Mutations are recorded at the atomic level at which Google Maps actually changes — `add-to-list`,
+`remove-from-list`, `append-note` — rather than at the level of the user-facing action. A **move**
+therefore appears as an add followed by a remove. This is deliberate: each atomic record carries
+everything needed to construct its own inverse, which is what makes the log usable for undo.
+
+| `op` | Inverse |
+|---|---|
+| `add-to-list` | remove the place from `list` |
+| `remove-from-list` | add the place back to `list` |
+| `append-note` | restore `previousNote` |
+
+`previousNote` matters most — it is the only record anywhere of what a note said beforehand. Maps
+keeps no history, and the collect snapshot is overwritten on every re-sync.
+
+Two guarantees make the log trustworthy for recovery:
+
+- **Append-only, flushed per entry.** Written with a synchronous append per line, so a crash or a
+  force-closed browser (which is how cancellation works) can never truncate what came before.
+- **Written only after the change commits.** Every mutation is logged after its settle wait, never
+  before — so anything in the file is something that actually happened.
+
+The converse is worth knowing: a process killed mid-click can leave a change made in Maps but not
+logged. The window is small, but the log is a lower bound on what happened, not a perfect mirror.
+There is no automatic rollback — the log gives you the data to reconstruct by hand.
 
 ---
 
@@ -148,7 +198,9 @@ GET  /api/collect-files          → list of collection JSON files in output/
 GET  /api/collections/:fileName  → contents of a specific collection JSON
 DEL  /api/collect-files/:name    → delete a collection file
 
-POST /api/log-error              → { message } — write a client-side error entry to output/errors_{ts}.json
+POST /api/log-error              → { message } — record a client-side error in the session log
+
+GET  /map-background.jpg         → static page background (the only static asset route; matched by exact path)
 
 POST /api/collect/start          → { listName } — launch collect workflow
 POST /api/collect/browse-lists   → scrape all saved list names (no listName needed); writes output/saved-lists.json and broadcasts a savedLists event
@@ -156,6 +208,7 @@ POST /api/collect/cancel         → force-stop an in-progress collect/browse ru
 POST /api/collect/reset          → reset collect workflow to idle
 
 POST /api/update/start           → { collectionFile, actions[], dryRun? } — write action file, launch update workflow (dryRun forced true if server started with DRY_RUN=true)
+POST /api/update/cancel          → force-stop an in-progress update run (see Cancellation)
 POST /api/update/reset           → reset update workflow to idle
 
 POST /api/reset                  → reset both workflows to idle
@@ -200,7 +253,7 @@ Navigation to Google Maps is broken into composable, reusable steps in `src/play
 | `cancel.ts` | `requestCancel()`, `isCancelRequested()`, `resetCancel()`, `CancelledError` | Cooperative cancellation flag checked by collect/browse loops — see [Cancellation](#cancellation) |
 | `get-place-details.ts` | `(page, placeName) → PlaceDetails` | Clicks a place, scrapes name/address/note |
 | `open-place-panel.ts` | `openPlacePanel(page, placeName) → OpenPlacePanelResult`; also exports `placeButtonName(placeName)`, `closeMembershipDropdown(page)` | Opens a place's detail panel and returns a Locator scoped to it, for reading/toggling its "Saved (N)" membership dropdown |
-| `set-place-note.ts` | `appendPlaceNote(page, placeName, noteToAdd) → SetNoteOutcome` | Appends text to a place's note in the currently open list's feed, creating the note if it doesn't have one |
+| `set-place-note.ts` | `appendPlaceNote(page, placeName, noteToAdd, listName?) → SetNoteOutcome` | Appends text to a place's note in the currently open list's feed, creating the note if it doesn't have one. `listName` is used only to label the mutation log entry |
 | `copy-place-to-list.ts` | `(page, placeName, sourceListName, destinationListName, note?) → CopyOutcome` | Adds a place to a list via the Saved dropdown, skipping the click if already a member; if `note` is given, appends it to the place's note on the destination list |
 | `remove-place-from-list.ts` | `(page, placeName, listName) → RemoveOutcome` | Removes a place from a list via the Saved dropdown, skipping the click if not a member |
 | `move-place-to-list.ts` | `(page, placeName, src, dest, note?) → MoveOutcome` | Composes copy + remove: adds to `dest` first (carrying `note` over if given), then removes from `src` |
@@ -208,6 +261,8 @@ Navigation to Google Maps is broken into composable, reusable steps in `src/play
 | `update.ts` | `(context, actionFilePath) → void` | Full update workflow — navigate, apply each action |
 
 `collect.ts` and `update.ts` orchestrate the atomic modules above. The smaller modules are independently usable in scripts or future flows.
+
+The three modules that actually change something in Maps — `copy-place-to-list.ts`, `remove-place-from-list.ts`, and `set-place-note.ts` — each call `logMutation()` from `src/logger.ts` immediately after the change settles. Instrumenting at this level rather than in `update.ts` means any future flow that composes these modules is recorded automatically. See [Session logging](#session-logging).
 
 ### Selector fragility
 
