@@ -68,7 +68,26 @@ Both the import screen and the update screen have a _Cancel_ button for when the
 
 ## Where your data lives
 
-Everything is written to `output/` (git-ignored) and never leaves your machine: your imported collections, the list of saved-list names, and a per-session change log under `output/logs/`. The change log records every write the tool makes to Maps, at a level detailed enough to reverse it by hand. See [docs/architecture.md](./docs/architecture.md#output-files) for the file formats and [docs/session-logging.md](./docs/session-logging.md) for the log.
+Everything is written to `output/` (git-ignored) and never leaves your machine: your imported collections, the list of saved-list names, and a per-session change log under `output/logs/`.
+
+### Undoing a mistake
+
+Every change the tool makes to Google Maps is recorded in a session log at `output/logs/session_<timestamp>.jsonl` — a fresh file each time the server starts. Each line is one change (a place added to a list, removed from a list, or a note appended), recorded in enough detail to reverse it by hand:
+
+- an **add** is undone by removing the place from that list,
+- a **remove** is undone by adding it back,
+- a **note** change stores the previous text, so you can restore it.
+
+There's no automatic undo button, but the log is an exact, time-ordered record of what happened — so if a run does something you didn't intend, you can open the log and walk the changes back in Maps yourself. See [docs/session-logging.md](./docs/session-logging.md) for the format and [docs/architecture.md](./docs/architecture.md#output-files) for the other files.
+
+## Accuracy & reporting problems
+
+This tool automates a real browser against Google Maps' live website — which changes without notice and has no official API for personal saved data. **100% accuracy is not guaranteed.** A run can occasionally skip a place, misread a note, or fail on a page element that Maps has changed. So:
+
+- Use **Dry run** first when you're unsure — it walks through every change and reports what it _would_ do without writing anything.
+- Sanity-check important changes afterward, and keep the session log (above) as your safety net.
+
+If you notice a bug, a wrong result, or anything that looks off, please **[open a GitHub issue](https://github.com/E-Kuerschner/gmaps-retag/issues)**. Describe what you did and, if you can, include the relevant lines from the session log — reports like that are the main way selector breakages get found and fixed.
 
 ## How it works
 
