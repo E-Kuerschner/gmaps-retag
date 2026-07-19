@@ -16,6 +16,13 @@ export interface CollectedList {
   listName: string;
   lastUpdated: string;
   places: Place[];
+  /**
+   * Set when an update run mutated this list in Maps after it was last collected, so the
+   * on-disk snapshot no longer matches. The home screen reads it to recommend a re-sync.
+   * A fresh collect overwrites the whole file and so clears it. Absent means "in sync as
+   * far as we know".
+   */
+  dirtySince?: string;
 }
 
 export interface ActionFile {

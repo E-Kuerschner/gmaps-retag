@@ -63,6 +63,6 @@ Written to `output/` (git-ignored except `.gitkeep`):
 
 | Pattern | Contents |
 |---|---|
-| `{list}.json` | Raw scraped places (`CollectedList`) — overwritten on each re-collect; `lastUpdated` inside tracks when it was last run |
+| `{list}.json` | Raw scraped places (`CollectedList`) — overwritten on each re-collect; `lastUpdated` inside tracks when it was last run, and `dirtySince` (set by `src/resync.ts` after an update mutates the list) flags it for re-sync on the home screen until the next collect overwrites it |
 | `{list}_{ts}_actions.json` | User-confirmed actions (`ActionFile`) — deleted when the update run ends; its intent is logged to the session log first |
 | `logs/session_{ts}.jsonl` | One JSONL log per server process. Every entry has `timestamp` + `level` (`info`/`error`); entries recording a change to a saved list also carry a `mutation` (`add-to-list` / `remove-from-list` / `append-note`) written so it can be inverted for undo. See README "Session logging". |

@@ -42,7 +42,7 @@ Each collection is a permanent URL. Browser back and forward work naturally thro
 
 Click _Scan My Saved Lists_. A browser window opens, navigates to Google Maps, and reads the names of all your saved lists — no places are scraped yet, just the list names (written to `output/saved-lists.json`, also used elsewhere for the _Move to…_ dropdown). Once it finishes, pick one from the dropdown (lists already imported are left out, since re-syncing those is handled below) and click _Import_. That runs the full import — opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
 
-Previously imported lists appear below with a "Last synced" timestamp — since each is a point-in-time snapshot, click _Re-sync_ next to a list to refresh it if it's been a while (the page flags anything older than a week and suggests a re-sync).
+Previously imported lists appear below with a "Last synced" timestamp — since each is a point-in-time snapshot, click _Re-sync_ next to a list to refresh it. The page suggests a re-sync for two reasons: the snapshot is older than a week, or an update run has since written to that list in Maps (moved/copied a place into it, removed one from it, or appended a note) so the snapshot no longer matches. The second case is tracked with a `dirtySince` stamp written onto the collection file when the update runs — only lists that are actually imported get flagged, and the next collect overwrites the file and clears it.
 
 While a scan or import is running, a _Cancel_ button is available if it gets stuck (e.g. Maps never finishing loading, or a scroll loop that never reaches the bottom). Cancelling force-closes the Playwright browser, which is what actually unblocks whatever call was hanging — see [Cancellation](#cancellation) below.
 
@@ -82,7 +82,7 @@ Everything is written to `output/` (git-ignored except `.gitkeep`):
 | File pattern | Contents |
 |---|---|
 | `saved-lists.json` | Names of all saved lists — refreshed on each collect run, used to populate the _Move to…_ dropdown |
-| `{list}_{ts}.json` | Scraped collection — places with name, address, and note |
+| `{list}_{ts}.json` | Scraped collection — places with name, address, and note; carries a `dirtySince` stamp once an update mutates the list, which flags it for re-sync on the home screen until the next collect overwrites the file |
 | `{list}_{ts}_actions.json` | Actions confirmed on the collection page (created when update starts, **deleted when the run ends** — the intent is recorded in the session log first) |
 | `logs/session_{ts}.jsonl` | One log file per server process — see [Session logging](#session-logging) |
 
@@ -194,7 +194,7 @@ GET  /collections/:fileName      → collection.html
 
 GET  /api/events                 → SSE stream (broadcasts AppState on every mutation)
 GET  /api/saved-lists            → names of all saved lists (from output/saved-lists.json, or [] if not yet collected)
-GET  /api/collect-files          → list of collection JSON files in output/
+GET  /api/collect-files          → list of collection JSON files in output/ (each: fileName, listName, lastUpdated, dirtySince — dirtySince set when an update has since mutated the list)
 GET  /api/collections/:fileName  → contents of a specific collection JSON
 DEL  /api/collect-files/:name    → delete a collection file
 
@@ -263,6 +263,8 @@ Navigation to Google Maps is broken into composable, reusable steps in `src/play
 `collect.ts` and `update.ts` orchestrate the atomic modules above. The smaller modules are independently usable in scripts or future flows.
 
 The three modules that actually change something in Maps — `copy-place-to-list.ts`, `remove-place-from-list.ts`, and `set-place-note.ts` — each call `logMutation()` from `src/logger.ts` immediately after the change settles. Instrumenting at this level rather than in `update.ts` means any future flow that composes these modules is recorded automatically. See [Session logging](#session-logging).
+
+As it runs, `update.ts` also tracks which lists it wrote to (the source it removed from, plus any list it added to or noted on) and, once the run ends, passes them to `flagListsForResync()` in `src/resync.ts`. That stamps `dirtySince` onto the matching collection file(s) on disk so the home screen recommends a re-sync — but only for lists that are actually imported, since a mutation to a never-imported list has no snapshot to go stale. Flagging happens in the run's `finally`, so a cancelled or errored run still flags whatever it managed to change; the next collect overwrites the file and clears the stamp.
 
 ### Selector fragility
 

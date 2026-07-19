@@ -308,11 +308,21 @@
       const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
       list.innerHTML = '';
-      files.forEach(({ fileName, listName, lastUpdated }) => {
+      files.forEach(({ fileName, listName, lastUpdated, dirtySince }) => {
         const updatedLabel = lastUpdated
           ? new Date(lastUpdated).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
           : '';
+        // Two independent reasons to nudge a re-sync: the snapshot is old, or an update run
+        // has since written to this list in Maps so the snapshot no longer matches. A
+        // mutation is the stronger signal, so its wording wins when both are true.
         const isStale = lastUpdated && (Date.now() - new Date(lastUpdated).getTime()) > STALE_AFTER_MS;
+        const isDirty = !!dirtySince;
+        const needsResync = isStale || isDirty;
+        const resyncReason = isDirty
+          ? 'This list was changed by an update since it was last synced — click Re-sync to refresh it.'
+          : isStale
+            ? 'It has been over a week since this list was last synced — click Re-sync to see recent changes.'
+            : '';
         const li = document.createElement('li');
         li.className = 'flex items-center justify-between px-4 py-3';
         li.innerHTML = `
@@ -320,8 +330,8 @@
              class="text-blue-600 hover:underline font-medium text-sm truncate mr-4">${escHtml(listName || fileName)}</a>
           <div class="flex items-center gap-4 shrink-0">
             ${updatedLabel
-              ? `<span class="text-xs ${isStale ? 'text-amber-600' : 'text-gray-400'}" title="${isStale ? 'It has been over a week since this list was last synced — click Re-sync to see recent changes.' : ''}">
-                   Last synced ${escHtml(updatedLabel)}${isStale ? ' · re-sync recommended' : ''}
+              ? `<span class="text-xs ${needsResync ? 'text-amber-600' : 'text-gray-400'}" title="${escHtml(resyncReason)}">
+                   Last synced ${escHtml(updatedLabel)}${needsResync ? ' · re-sync recommended' : ''}
                  </span>`
               : ''
             }
