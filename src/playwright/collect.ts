@@ -147,9 +147,9 @@ export async function collectList(
     setCollectState({ status: 'error', message });
     throw finalErr;
   } finally {
-    // Close only this run's page, not the cached browser context — see the note in
-    // update.ts's finally. Relaunching the persistent context between runs races the
-    // profile lock and strands the next run on "Opening Google Maps…".
+    // Close only this run's page, not the browser window — see the note in update.ts's
+    // finally. Relaunching between runs races the profile lock and strands the next run
+    // on "Opening Google Maps…".
     await page?.close().catch(() => {});
   }
 }

@@ -4,10 +4,9 @@ import { join } from 'path';
 // Persist the browser profile so the user only needs to log in once.
 const USER_DATA_DIR = join(process.cwd(), 'browser-data');
 
-// Upper bound on the liveness probe in getBrowserContext(). A healthy context answers in
-// single-digit milliseconds, so this only ever elapses when the browser is actually gone —
-// it's the ceiling on how long a run can look stuck before we give up on the cached context
-// and relaunch, replacing what used to be an unbounded "Opening Google Maps…" hang.
+// Ceiling on the liveness probe in getBrowserContext(). A live browser answers in
+// milliseconds, so this only elapses when the window is actually gone — bounding what
+// used to be an unbounded "Opening Google Maps…" hang.
 const LIVENESS_PROBE_TIMEOUT_MS = 5_000;
 
 let context: BrowserContext | null = null;
@@ -29,21 +28,18 @@ function isUsable(ctx: BrowserContext): boolean {
 }
 
 /**
- * Actively confirms the cached context can still talk to its browser, within a timeout.
+ * Confirms the cached window still answers, within a timeout.
  *
- * isUsable() is only a cheap synchronous guess: for a persistent context ctx.browser() is
- * null, so it always says "usable" and leans entirely on the 'close' listener to notice a
- * dead browser. That listener covers every case where the browser DISCONNECTS (crash, kill,
- * the user closing the window) — but not the narrow one where the process is alive yet
- * wedged, or where 'close' simply hasn't propagated yet in the split second before a new run
- * starts. In those cases the stale context is reused and the first newPage() never settles,
- * which is exactly the silent "Opening Google Maps…" hang we're guarding against.
+ * isUsable() is only a synchronous guess: for a persistent context ctx.browser() is null, so
+ * it always says "usable" and relies on the 'close' listener to catch a dead browser. That
+ * listener fires whenever the window DISCONNECTS (crash, kill, the user closing it) — but not
+ * when the process is alive yet wedged, or when 'close' hasn't propagated yet in the split
+ * second before a new run. Then the stale window is reused and newPage() never settles — the
+ * silent "Opening Google Maps…" hang.
  *
- * cookies() is a lightweight protocol round-trip that needs a live browser but, unlike
- * newPage(), opens no visible tab. On a healthy context it resolves immediately; on a dead
- * or wedged one it hangs (or rejects), so we race it against a timeout: resolve → alive,
- * timeout/throw → treat as dead and relaunch. The abandoned cookies() promise on the dead
- * path never settles, which is harmless — it holds nothing open.
+ * cookies() is a lightweight round-trip that needs a live browser but opens no tab. Healthy →
+ * resolves at once; dead/wedged → hangs, so we race it against a timeout. The abandoned
+ * cookies() promise on the dead path holds nothing open.
  */
 async function isAlive(ctx: BrowserContext): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -65,10 +61,8 @@ async function isAlive(ctx: BrowserContext): Promise<boolean> {
 export async function getBrowserContext(): Promise<BrowserContext> {
   if (context && !isUsable(context)) context = null;
 
-  // Then the airtight check: probe the cached context for real before handing it back, so a
-  // wedged-but-not-disconnected browser (or a 'close' event that hasn't fired yet) becomes a
-  // fast relaunch instead of a run that hangs forever on its first step. Only the reuse path
-  // pays for this; a freshly launched context below is trusted without a probe.
+  // Then probe it for real: a wedged window (or a 'close' that hasn't fired yet) becomes a
+  // fast relaunch instead of a hang. Only the reuse path pays; a fresh launch is trusted.
   if (context && !(await isAlive(context))) {
     await context.close().catch(() => {});
     context = null;

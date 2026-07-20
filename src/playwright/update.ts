@@ -205,13 +205,11 @@ export async function performUpdates(
     } catch {
       // Already gone, or never written — nothing to clean up.
     }
-    // Close only this run's page, NOT the browser context. The context is cached and
-    // reused across runs (see browser.ts); tearing it down here forced the next run to
-    // relaunch launchPersistentContext() on the same profile dir, and a back-to-back
-    // relaunch races Chromium's release of the profile's Singleton lock — the losing run
-    // hangs on page.goto() and surfaces as a stuck "Opening Google Maps…". getBrowserContext()
-    // already relaunches on its own if the context died (isUsable check), and the browser is
-    // torn down explicitly via /api/browser/close and the cancel routes.
+    // Close only this run's page, NOT the browser window — it's reused across runs (see
+    // browser.ts). Tearing it down here forced the next run to relaunch on the same profile
+    // dir, and a back-to-back relaunch races the profile lock: the losing run hangs on
+    // page.goto() as a stuck "Opening Google Maps…". The window closes only on the explicit
+    // paths — /api/browser/close, the cancel routes, and process exit.
     await page?.close().catch(() => {});
   }
 }
