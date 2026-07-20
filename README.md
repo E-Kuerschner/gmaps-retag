@@ -19,10 +19,7 @@ bunx playwright install chromium
 ## Usage
 
 ```bash
-bun run dev          # watch mode (restarts on file changes)
-bun run dev:dry      # watch mode + dry-run (no Maps changes written)
-bun run start        # production
-bun run start:dry    # production + dry-run
+bun run start
 ```
 
 Open **http://localhost:3000** in your browser.
@@ -56,9 +53,7 @@ Check _Dry run_ if you just want to validate selectors without touching real dat
 
 ### Dry-run mode
 
-Dry run is a per-update choice, not a server-wide setting: tick the _Dry run_ checkbox above the action table before clicking _Start Update_. The browser navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. An amber banner appears on the collection page and it logs what _would_ have been applied instead of applying it.
-
-Starting the server with `DRY_RUN=true` (or the `dev:dry` / `start:dry` scripts) forces every update to run as a dry run regardless of the checkbox — the checkbox is shown checked and disabled in that case. Use the env var for a server that should never write to Maps (e.g. a staging setup); use the per-update checkbox to validate a specific run on an otherwise live server.
+Dry run is a per-update choice you opt into from the UI: tick the _Dry run_ checkbox above the action table before clicking _Start Update_. The browser navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. An amber banner appears on the collection page and it logs what _would_ have been applied instead of applying it.
 
 ### Cancelling a run
 
@@ -89,7 +84,13 @@ This tool automates a real browser against Google Maps' live website — which c
 
 If you notice a bug, a wrong result, or anything that looks off, please **[open a GitHub issue](https://github.com/E-Kuerschner/gmaps-retag/issues)**. Describe what you did and, if you can, include the relevant lines from the session log — reports like that are the main way selector breakages get found and fixed.
 
-## How it works
+## Development
+
+Run in watch mode to restart on file changes:
+
+```bash
+bun run dev
+```
 
 For contributors: the design — process model, state and SSE communication, the Playwright module breakdown, and how selectors are kept resilient to Maps changes — is documented under [`docs/`](./docs):
 

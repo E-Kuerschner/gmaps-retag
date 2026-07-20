@@ -1,5 +1,4 @@
 import type { AppState, CollectWorkflow, UpdateWorkflow } from './types.ts';
-import { isDryRun } from './config.ts';
 
 type SSEController = ReadableStreamDefaultController<Uint8Array>;
 
@@ -26,7 +25,6 @@ export function broadcast(event: string, data: unknown) {
 }
 
 let state: AppState = {
-  dryRun: isDryRun,
   collect: { status: 'idle' },
   update: { status: 'idle' },
 };

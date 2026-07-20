@@ -9,9 +9,7 @@ bun install                        # install dependencies
 bunx playwright install chromium   # install browser (first time only)
 
 bun run dev          # watch mode — restarts on file changes
-bun run dev:dry      # watch mode + dry-run (no Maps writes)
 bun run start        # production
-bun run start:dry    # production + dry-run
 ```
 
 No test runner or linter is configured. There is no build step — Bun runs TypeScript directly.
@@ -36,7 +34,6 @@ Deep-dive docs live in `docs/`; consult them for detail and keep them current (s
 - `src/mutations.ts` — `recordMutation()` (log a Maps change + flag its list for re-sync) and the run-scoped dirty-list tracking drained by `flushResyncFlags()`
 - `src/logger.ts` — session JSONL logging (`logInfo` / `logError` / `logMutation`)
 - `src/types.ts` — all shared types
-- `src/config.ts` — reads the `DRY_RUN` env var
 
 ### Data flow
 

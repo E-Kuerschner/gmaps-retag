@@ -34,7 +34,6 @@ State is split into two independent workflows. Each page subscribes to the part 
 
 ```typescript
 interface AppState {
-  dryRun: boolean;
   collect: CollectWorkflow;   // watched by /
   update:  UpdateWorkflow;    // watched by /collections/:f
 }
@@ -77,7 +76,7 @@ POST /api/collect/browse-lists   → scrape all saved list names (no listName ne
 POST /api/collect/cancel         → force-stop an in-progress collect/browse run (see Cancellation)
 POST /api/collect/reset          → reset collect workflow to idle
 
-POST /api/update/start           → { collectionFile, actions[], dryRun? } — write action file, launch update workflow (dryRun forced true if server started with DRY_RUN=true)
+POST /api/update/start           → { collectionFile, actions[], dryRun? } — write action file, launch update workflow (dryRun is the per-update UI opt-in)
 POST /api/update/cancel          → force-stop an in-progress update run (see Cancellation)
 POST /api/update/reset           → reset update workflow to idle
 

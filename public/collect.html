@@ -28,9 +28,6 @@
 </head>
 <body class="min-h-screen bg-gray-50">
 
-  <div id="dry-run-banner" class="hidden bg-amber-400 text-amber-900 text-sm font-medium text-center py-2 px-4">
-    DRY RUN MODE — no changes will be made to your saved lists during the Update step
-  </div>
 
   <header class="bg-white border-b border-gray-200 px-6 py-4">
     <h1 class="font-semibold text-gray-900">gmaps-retag</h1>
@@ -134,7 +131,6 @@
     }
 
     function applyState(state) {
-      document.getElementById('dry-run-banner').classList.toggle('hidden', !state.dryRun);
       const { collect } = state;
 
       if (collect.status === 'running' || collect.status === 'browsing') {
