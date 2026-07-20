@@ -34,7 +34,6 @@ Deep-dive docs live in `docs/`; consult them for detail and keep them current (s
 - `src/mutations.ts` — `recordMutation()` (log a Maps change + flag its list for re-sync) and the run-scoped dirty-list tracking drained by `flushResyncFlags()`
 - `src/logger.ts` — session JSONL logging (`logInfo` / `logError` / `logMutation`)
 - `src/types.ts` — all shared types
-- `src/config.ts` — reads the `DRY_RUN` env var
 
 ### Data flow
 

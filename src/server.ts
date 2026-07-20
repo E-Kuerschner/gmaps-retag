@@ -6,7 +6,6 @@ import { collectList } from './playwright/collect.ts';
 import { browseSavedLists } from './playwright/browse-saved-lists.ts';
 import { performUpdates } from './playwright/update.ts';
 import { resetCancel, requestCancel, isCancelRequested } from './playwright/cancel.ts';
-import { isDryRun } from './config.ts';
 import { logInfo, logError, getSessionLogPath } from './logger.ts';
 import type { PlaceAction, ActionFile, CollectedList } from './types.ts';
 
@@ -228,7 +227,7 @@ const server = Bun.serve({
     if (pathname === '/api/update/start' && method === 'POST') {
       const body = (await req.json()) as { collectionFile?: string; actions?: PlaceAction[]; dryRun?: boolean };
       const { collectionFile, actions = [] } = body;
-      const dryRun = isDryRun || body.dryRun === true;
+      const dryRun = body.dryRun === true;
 
       if (!collectionFile) return json({ error: 'collectionFile is required' }, 400);
 
@@ -312,6 +311,6 @@ const server = Bun.serve({
   },
 });
 
-logInfo(`Server session started (dryRun=${isDryRun})`, { port: server.port });
+logInfo('Server session started', { port: server.port });
 console.log(`\n  gmaps-retag running → http://localhost:${server.port}`);
 console.log(`  session log → ${getSessionLogPath()}\n`);

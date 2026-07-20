@@ -70,7 +70,6 @@ export interface UpdateWorkflow {
 }
 
 export interface AppState {
-  dryRun: boolean;
   collect: CollectWorkflow;
   update: UpdateWorkflow;
 }

@@ -389,13 +389,7 @@
 
     // ── SSE ──────────────────────────────────────────────────────────────────
     function applyState(state) {
-      const toggle = document.getElementById('dry-run-toggle');
-      if (state.dryRun) {
-        toggle.checked = true;
-        toggle.disabled = true;
-        toggle.title = 'Server is running with DRY_RUN=true — every update runs as a dry run.';
-      }
-      const dryRunActive = state.dryRun || (updatingThisSession && state.update.dryRun);
+      const dryRunActive = updatingThisSession && state.update.dryRun;
       document.getElementById('dry-run-banner').classList.toggle('hidden', !dryRunActive);
       if (!updatingThisSession) return;
 
