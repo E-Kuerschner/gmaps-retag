@@ -4,7 +4,6 @@ import { basename } from 'path';
 import type { ActionFile } from '../types.ts';
 import { setUpdateState, broadcast } from '../state.ts';
 import { logInfo, logError, getSessionLogPath } from '../logger.ts';
-import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 import { movePlaceToList } from './move-place-to-list.ts';
@@ -206,9 +205,13 @@ export async function performUpdates(
     } catch {
       // Already gone, or never written — nothing to clean up.
     }
-    // Failing to close the page must not skip closeBrowser() — that was how a dead
-    // context got left cached, hanging every subsequent run.
+    // Close only this run's page, NOT the browser context. The context is cached and
+    // reused across runs (see browser.ts); tearing it down here forced the next run to
+    // relaunch launchPersistentContext() on the same profile dir, and a back-to-back
+    // relaunch races Chromium's release of the profile's Singleton lock — the losing run
+    // hangs on page.goto() and surfaces as a stuck "Opening Google Maps…". getBrowserContext()
+    // already relaunches on its own if the context died (isUsable check), and the browser is
+    // torn down explicitly via /api/browser/close and the cancel routes.
     await page?.close().catch(() => {});
-    await closeBrowser();
   }
 }

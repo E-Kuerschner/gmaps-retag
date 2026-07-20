@@ -4,7 +4,6 @@ import { mkdirSync } from 'fs';
 import type { Place, CollectedList } from '../types.ts';
 import { setCollectState, broadcast } from '../state.ts';
 import { logInfo, logError } from '../logger.ts';
-import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 import { scrapeSavedListNames, writeSavedListNames } from './saved-list-names.ts';
@@ -148,7 +147,9 @@ export async function collectList(
     setCollectState({ status: 'error', message });
     throw finalErr;
   } finally {
+    // Close only this run's page, not the cached browser context — see the note in
+    // update.ts's finally. Relaunching the persistent context between runs races the
+    // profile lock and strands the next run on "Opening Google Maps…".
     await page?.close().catch(() => {});
-    await closeBrowser();
   }
 }

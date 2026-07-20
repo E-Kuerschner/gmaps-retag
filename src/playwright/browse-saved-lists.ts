@@ -3,7 +3,6 @@ import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { setCollectState, broadcast } from '../state.ts';
 import { logInfo, logError } from '../logger.ts';
-import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { scrapeSavedListNames, writeSavedListNames } from './saved-list-names.ts';
 import { isCancelRequested, CancelledError } from './cancel.ts';
@@ -44,7 +43,9 @@ export async function browseSavedLists(context: BrowserContext): Promise<void> {
     setCollectState({ status: 'error', message: finalErr.message });
     throw finalErr;
   } finally {
+    // Close only this run's page, not the cached browser context — see the note in
+    // update.ts's finally. Relaunching the persistent context between runs races the
+    // profile lock and strands the next run on "Opening Google Maps…".
     await page?.close().catch(() => {});
-    await closeBrowser();
   }
 }
