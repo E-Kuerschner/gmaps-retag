@@ -4,7 +4,6 @@ import { basename } from 'path';
 import type { ActionFile } from '../types.ts';
 import { setUpdateState, broadcast } from '../state.ts';
 import { logInfo, logError, getSessionLogPath } from '../logger.ts';
-import { closeBrowser } from './browser.ts';
 import { openSavedLists } from './open-saved-lists.ts';
 import { openListByName } from './open-list-by-name.ts';
 import { movePlaceToList } from './move-place-to-list.ts';
@@ -206,9 +205,11 @@ export async function performUpdates(
     } catch {
       // Already gone, or never written — nothing to clean up.
     }
-    // Failing to close the page must not skip closeBrowser() — that was how a dead
-    // context got left cached, hanging every subsequent run.
+    // Close only this run's page, NOT the browser window — it's reused across runs (see
+    // browser.ts). Tearing it down here forced the next run to relaunch on the same profile
+    // dir, and a back-to-back relaunch races the profile lock: the losing run hangs on
+    // page.goto() as a stuck "Opening Google Maps…". The window closes only on the explicit
+    // paths — /api/browser/close, the cancel routes, and process exit.
     await page?.close().catch(() => {});
-    await closeBrowser();
   }
 }

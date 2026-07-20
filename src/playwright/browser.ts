@@ -4,6 +4,11 @@ import { join } from 'path';
 // Persist the browser profile so the user only needs to log in once.
 const USER_DATA_DIR = join(process.cwd(), 'browser-data');
 
+// Ceiling on the liveness probe in getBrowserContext(). A live browser answers in
+// milliseconds, so this only elapses when the window is actually gone — bounding what
+// used to be an unbounded "Opening Google Maps…" hang.
+const LIVENESS_PROBE_TIMEOUT_MS = 5_000;
+
 let context: BrowserContext | null = null;
 
 /**
@@ -22,8 +27,46 @@ function isUsable(ctx: BrowserContext): boolean {
   return browser === null || browser.isConnected();
 }
 
+/**
+ * Confirms the cached window still answers, within a timeout.
+ *
+ * isUsable() is only a synchronous guess: for a persistent context ctx.browser() is null, so
+ * it always says "usable" and relies on the 'close' listener to catch a dead browser. That
+ * listener fires whenever the window DISCONNECTS (crash, kill, the user closing it) — but not
+ * when the process is alive yet wedged, or when 'close' hasn't propagated yet in the split
+ * second before a new run. Then the stale window is reused and newPage() never settles — the
+ * silent "Opening Google Maps…" hang.
+ *
+ * cookies() is a lightweight round-trip that needs a live browser but opens no tab. Healthy →
+ * resolves at once; dead/wedged → hangs, so we race it against a timeout. The abandoned
+ * cookies() promise on the dead path holds nothing open.
+ */
+async function isAlive(ctx: BrowserContext): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      ctx.cookies(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('liveness probe timed out')), LIVENESS_PROBE_TIMEOUT_MS);
+      }),
+    ]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function getBrowserContext(): Promise<BrowserContext> {
   if (context && !isUsable(context)) context = null;
+
+  // Then probe it for real: a wedged window (or a 'close' that hasn't fired yet) becomes a
+  // fast relaunch instead of a hang. Only the reuse path pays; a fresh launch is trusted.
+  if (context && !(await isAlive(context))) {
+    await context.close().catch(() => {});
+    context = null;
+  }
 
   if (!context) {
     const launched = await chromium.launchPersistentContext(USER_DATA_DIR, {

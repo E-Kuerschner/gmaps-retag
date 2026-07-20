@@ -67,6 +67,10 @@ Both the import screen and the update screen have a _Cancel_ button for when the
 
 **Cancelling an update is not an undo.** An import only reads, so stopping it loses nothing. An update may already have written some changes to Maps by the time you cancel — those stay; the run just stops where it is and tells you how many actions completed. See [docs/cancellation.md](./docs/cancellation.md) for the details.
 
+### The automation window
+
+The browser window the tool drives **stays open between runs** — that's deliberate. It keeps you logged in and lets the next import or update start immediately instead of reopening and re-authenticating each time. You can close it whenever you like (the window's own close button is fine); the tool simply opens a fresh one on the next run, and your Google login is remembered either way. It also closes on its own when you stop the server.
+
 ## Where your data lives
 
 Everything is written to `output/` (git-ignored) and never leaves your machine: your imported collections, the list of saved-list names, and a per-session change log under `output/logs/`.

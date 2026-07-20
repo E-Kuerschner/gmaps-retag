@@ -111,7 +111,7 @@ Navigation to Google Maps is broken into composable, reusable steps in `src/play
 
 | Module | Signature | What it does |
 |---|---|---|
-| `browser.ts` | `getBrowserContext()` | Creates/reuses the persistent Chromium profile in `browser-data/` |
+| `browser.ts` | `getBrowserContext()`, `closeBrowser()` | Owns the single long-lived persistent Chromium context in `browser-data/`; launches it lazily, reuses it across runs, and liveness-probes it before reuse so a dead or wedged browser triggers a clean relaunch instead of a silent hang |
 | `open-saved-lists.ts` | `(context) → Page`; also exports `resetToSavedListsPanel(page)` | Navigates to Maps and opens the saved-lists panel; the reset helper returns to that panel from any depth without a full reload, for switching between lists mid-flow |
 | `open-list-by-name.ts` | `(page, listName) → Page` | Clicks a named list in the panel — only works from the saved-lists overview |
 | `saved-list-names.ts` | `scrapeSavedListNames(page)`, `writeSavedListNames(dir, names)` | Reads list names from the open saved-lists panel and persists them |
@@ -143,9 +143,21 @@ Google Maps uses dynamically generated CSS class names. All Playwright selectors
 
 These annotations are the first things to check when a live Maps session breaks a flow.
 
-## Browser persistence
+## Browser lifecycle
 
-Playwright launches a **persistent browser context** stored in `browser-data/` (git-ignored). This preserves the Google session between server restarts so login is only required once.
+Playwright launches a single **persistent browser context** stored in `browser-data/` (git-ignored), which preserves the Google session across server restarts so login is only required once.
+
+That context is **long-lived and shared across runs**, not torn down after each one. `getBrowserContext()` launches it lazily on the first run and caches it in a module-level singleton; each workflow's `finally` closes only the page it opened, leaving the context alive for the next run. The context is destroyed only on the explicit paths: `POST /api/browser/close`, the collect/update **cancel** routes, and process exit.
+
+This matters because relaunching a persistent context on the same profile directory back-to-back races Chromium's release of the profile lock — the losing run comes up degraded and strands on `page.goto()`, surfacing to the user as a stuck "Opening Google Maps…". Keeping one context alive between runs avoids the relaunch (and the race) entirely; the browser only ever relaunches after a *human*-paced gap, which is never in the contended window.
+
+Because the browser can still disappear out-of-band — the user closing the window, a crash, a kill — `getBrowserContext()` guards the **reuse path** three ways before handing back a cached context:
+
+1. A `'close'` listener nulls the cache whenever the browser disconnects. This covers every clean disconnect: crash, kill, and the user closing the window.
+2. `isUsable()` — a cheap synchronous check. It's effectively a no-op for a persistent context (whose `browser()` handle is `null`), kept as a fast-path guard.
+3. `isAlive()` — actively probes the cached context with `context.cookies()`, a lightweight protocol round-trip that opens no visible tab, raced against a 5s timeout (`LIVENESS_PROBE_TIMEOUT_MS`). This catches the narrow cases the `'close'` listener can't: a browser that is *alive but wedged*, or a `'close'` event that hasn't propagated yet in the split second before a new run starts. On timeout (or throw) the stale context is closed and relaunched, turning what used to be an unbounded hang into a fast, automatic recovery.
+
+Only the reuse path pays for the probe; a context freshly launched in the same call is trusted without one.
 
 ## Output files
 
