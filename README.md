@@ -37,6 +37,8 @@ Each collection is a permanent URL. Browser back and forward work naturally thro
 
 **Step 1 — Collect** (`/`)
 
+![The home screen: an Import panel with a Scan My Saved Lists action and list picker, above a list of previously imported collections with their last-synced timestamps](./docs/screenshots/home-screen.png)
+
 Click _Scan My Saved Lists_. A browser window opens, navigates to Google Maps, and reads the names of all your saved lists — no places are scraped yet, just the list names. Once it finishes, pick one from the dropdown (lists you've already imported are left out, since re-syncing those is handled below) and click _Import_. That runs the full import — opens the target list, scrolls to load all places, and scrapes each one's name and note. Progress appears live as places stream in. When the run completes, the page redirects automatically to the new collection.
 
 Previously imported lists appear below with a "Last synced" timestamp. Since each is a point-in-time snapshot, click _Re-sync_ next to a list to refresh it. The page recommends a re-sync when the snapshot is over a week old, or when a later update has changed that list in Maps (moved or copied a place into it, removed one from it, or appended a note) so your imported copy no longer matches.
@@ -47,6 +49,8 @@ While a scan or import is running, a _Cancel_ button is available if it gets stu
 
 The collection page shows every place with its address and note. For each place choose _Keep_, _Remove_, _Move to…_, or _Copy to…_ (the latter two need a target list name). Places you leave as _Keep_ are ignored by the update. _Move_ removes the place from the source list once it's added to the target; _Copy_ adds it to the target list while leaving it in the source list. If the place has a note, _Copy_ and _Move_ carry it over to the target list — appended after whatever note the place already has there, if any, rather than overwriting it.
 
+![The collection review page: each place shows its note, an action dropdown, and a target-list selector](./docs/screenshots/review-table.png)
+
 **Step 3 — Update** (same page)
 
 Check _Dry run_ if you just want to validate selectors without touching real data, then click _Start Update_. The browser navigates back to Maps and applies every marked change. Progress is shown inline; individual failures are logged without stopping the rest of the run.
@@ -54,6 +58,8 @@ Check _Dry run_ if you just want to validate selectors without touching real dat
 ### Dry-run mode
 
 Dry run is a per-update choice you opt into from the UI: tick the _Dry run_ checkbox above the action table before clicking _Start Update_. The browser navigates all the way through to the save popup for each place and resolves every selector — but the final list-entry clicks are skipped. An amber banner appears on the collection page and it logs what _would_ have been applied instead of applying it.
+
+![The Dry run checkbox next to the Start Update button](./docs/screenshots/dry-run-controls.png)
 
 ### Cancelling a run
 
