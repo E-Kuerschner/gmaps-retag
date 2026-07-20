@@ -9,9 +9,7 @@ bun install                        # install dependencies
 bunx playwright install chromium   # install browser (first time only)
 
 bun run dev          # watch mode — restarts on file changes
-bun run dev:dry      # watch mode + dry-run (no Maps writes)
 bun run start        # production
-bun run start:dry    # production + dry-run
 ```
 
 No test runner or linter is configured. There is no build step — Bun runs TypeScript directly.
